@@ -91,6 +91,11 @@ separately to authenticate OpenAI on each machine.
 
 ## Ubuntu notes / troubleshooting
 
+If startup lands on qwen/local instead of GPT-5.4, the usual causes are missing
+OpenAI `/connect` auth on that machine or a previously persisted model choice.
+`profiles/` are optional presets you select explicitly; they are not
+auto-applied.
+
 If `sqz-mcp` or `uvx` are not installed yet, either install those tools or
 disable the local MCP servers in your untracked overlay with JSON like this:
 
