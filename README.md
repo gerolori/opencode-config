@@ -63,11 +63,14 @@ If you only want the shared MCP integration, install `sqz-mcp`.
 If you want full parity with the skill examples, install both `sqz-mcp` and `sqz`.
 
 ```bash
-# official installer
-curl -fsSL https://raw.githubusercontent.com/ojuschugh1/sqz/main/install.sh | sh
+# MCP only
+cargo install sqz-mcp
 
-# source install
+# Full parity with the skill examples
 cargo install sqz-cli sqz-mcp
+
+# Upstream installer (also fine if you prefer the official script)
+curl -fsSL https://raw.githubusercontent.com/ojuschugh1/sqz/main/install.sh | sh
 ```
 
 ## Setup
