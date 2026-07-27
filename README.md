@@ -1,7 +1,5 @@
 # opencode-config
 
-Public baseline for my opencode setup.
-
 ## Layout
 
 - `opencode.jsonc` — safe public config
@@ -10,29 +8,48 @@ Public baseline for my opencode setup.
 The copied `agents/`, `commands/`, `instructions/`, `profiles/`, and `skills/`
 directories are the shared opencode tree.
 
-## Clone or import
+## Ubuntu / Windows compatibility audit
 
-To use this repo as-is, clone it and open opencode from the repo root.
+Portable/shared today:
 
-If you are importing the config into another opencode setup, copy the public
-files (`opencode.jsonc`, `agents/`, `commands/`, `instructions/`, `profiles/`,
-`skills/`) into that setup and keep any private overlay separate.
+- `opencode.jsonc`
+- `agents/`, `commands/`, `skills/`
+- OpenAI auth via `/connect`
 
-## Public vs private
+Optional local-only overlay:
 
-Public baseline keeps shared model, agents, commands, and MCP servers that are
-not machine-bound. OpenAI models use opencode's local account-based `/connect`
-auth on each machine instead of a repo-stored API key.
+- personal MCPs such as Home Assistant and `semble`
 
-Private overlay holds machine-specific or personal-only settings like:
+Optional local MCP dependencies already enabled in the public config:
 
-- the Home Assistant MCP URL/token
-- the local `semble` MCP command path
-- anything else machine-specific
+- `sqz-mcp`
+- `uvx --python 3.11 duckduckgo-mcp-server`
 
-## Local-only overlay
+## Setup
 
-On a personal machine, copy the example to an ignored local file:
+### Ubuntu quickstart
+
+```bash
+git clone <repo-url>
+cd opencode-config
+opencode
+```
+
+In `opencode`, run `/connect` to sign into OpenAI.
+
+If you do not want Home Assistant or `semble`, you can stop here and use the
+shared config only.
+
+If you do want a local overlay:
+
+```bash
+cp opencode.private.local.example.json opencode.private.local.json
+$EDITOR opencode.private.local.json
+export OPENCODE_CONFIG="$PWD/opencode.private.local.json"
+opencode
+```
+
+### Windows example
 
 ```powershell
 Copy-Item .\opencode.private.local.example.json .\opencode.private.local.json
@@ -44,9 +61,22 @@ Edit the copied file, keep it untracked, and point `OPENCODE_CONFIG` at it:
 $env:OPENCODE_CONFIG = (Resolve-Path .\opencode.private.local.json)
 ```
 
-Then start `opencode` from the repo root. That loads the public
-`opencode.jsonc` plus the explicit local overlay together. Use `/connect` in
-`opencode` separately to authenticate OpenAI on each machine.
+Then start `opencode` from the repo root. Use `/connect` in `opencode`
+separately to authenticate OpenAI on each machine.
+
+## Ubuntu notes / troubleshooting
+
+If `sqz-mcp` or `uvx` are not installed yet, either install those tools or
+disable the local MCP servers in your untracked overlay with JSON like this:
+
+```json
+{
+  "mcp": {
+    "sqz": { "enabled": false },
+    "duckduckgo": { "enabled": false }
+  }
+}
+```
 
 ## Notes
 
