@@ -65,9 +65,14 @@ If you do want a local overlay:
 ```bash
 cp opencode.private.local.example.json opencode.private.local.json
 $EDITOR opencode.private.local.json
-export OPENCODE_CONFIG="$PWD/opencode.private.local.json"
+export OPENCODE_CONFIG="$HOME/src/opencode-config/opencode.private.local.json"
 opencode
 ```
+
+Use the absolute path to the overlay file so it works from any directory.
+If you cloned the repo somewhere else, update the path accordingly. For
+persistent global use, put that `export` line in `~/.zshrc` or your shell's rc
+file.
 
 ### Windows example
 
