@@ -50,8 +50,25 @@ Optional local-only overlay:
 
 Optional local MCP dependencies already enabled in the public config:
 
-- `sqz-mcp`
+- `sqz-mcp` (enough for the shared opencode MCP integration)
+- `sqz` (only needed for direct CLI usage, e.g. `... | sqz compress`)
 - `uvx --python 3.11 duckduckgo-mcp-server`
+
+### sqz on Ubuntu
+
+`opencode` talks to `sqz-mcp` over stdio, so the config pins that transport explicitly.
+
+If you only want the shared MCP integration, install `sqz-mcp`.
+
+If you want full parity with the skill examples, install both `sqz-mcp` and `sqz`.
+
+```bash
+# official installer
+curl -fsSL https://raw.githubusercontent.com/ojuschugh1/sqz/main/install.sh | sh
+
+# source install
+cargo install sqz-cli sqz-mcp
+```
 
 ## Setup
 
@@ -110,8 +127,9 @@ auto-applied.
 If a stale overlay still seems to win, check whether `OPENCODE_CONFIG` is set
 and unset it before launching `opencode`.
 
-If `sqz-mcp` or `uvx` are not installed yet, either install those tools or
-disable the local MCP servers in your untracked overlay with JSON like this:
+If `sqz-mcp` or `uvx` are not installed yet, either install those tools (or
+also `sqz` if you want the CLI examples) or disable the local MCP servers in
+your untracked overlay with JSON like this:
 
 ```json
 {
