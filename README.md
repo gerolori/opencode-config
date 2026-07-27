@@ -25,6 +25,17 @@ shared config keeps its JSONC comments.
 If you already have files in `~/.config/opencode`, the script will leave them in
 place and skip those entries.
 
+To fully replace any existing managed files with symlinks to this repo, run:
+
+```bash
+unset OPENCODE_CONFIG
+bash scripts/install-global.sh --force
+opencode
+```
+
+In force mode, replaced files are moved to timestamped backups in
+`~/.config/opencode` before the new symlinks are created.
+
 ## Ubuntu / Windows compatibility audit
 
 Portable/shared today:
@@ -95,6 +106,9 @@ If startup lands on qwen/local instead of GPT-5.4, the usual causes are missing
 OpenAI `/connect` auth on that machine or a previously persisted model choice.
 `profiles/` are optional presets you select explicitly; they are not
 auto-applied.
+
+If a stale overlay still seems to win, check whether `OPENCODE_CONFIG` is set
+and unset it before launching `opencode`.
 
 If `sqz-mcp` or `uvx` are not installed yet, either install those tools or
 disable the local MCP servers in your untracked overlay with JSON like this:

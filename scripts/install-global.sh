@@ -4,8 +4,41 @@ set -eu
 
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 target_dir="$HOME/.config/opencode"
+force=0
+
+while [ "$#" -gt 0 ]; do
+  case $1 in
+    --force)
+      force=1
+      ;;
+    -h|--help)
+      printf 'Usage: %s [--force]\n' "$0"
+      exit 0
+      ;;
+    *)
+      printf 'Unknown option: %s\n' "$1" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
 
 mkdir -p "$target_dir"
+
+backup_existing() {
+  dest=$1
+  ts=$(date +%Y%m%d-%H%M%S)
+  backup="$dest.backup-$ts"
+  i=1
+
+  while [ -e "$backup" ] || [ -L "$backup" ]; do
+    backup="$dest.backup-$ts-$i"
+    i=$((i + 1))
+  done
+
+  mv "$dest" "$backup"
+  printf 'backup %s -> %s\n' "$dest" "$backup"
+}
 
 link_path() {
   src=$1
@@ -17,8 +50,12 @@ link_path() {
       return 0
     fi
 
-    printf 'skip existing %s\n' "$dest" >&2
-    return 0
+    if [ "$force" -eq 1 ]; then
+      backup_existing "$dest"
+    else
+      printf 'skip existing %s\n' "$dest" >&2
+      return 0
+    fi
   fi
 
   ln -s "$src" "$dest"
