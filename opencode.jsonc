@@ -1,0 +1,275 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "autoupdate": true,
+  "model": "openai/gpt-5.4-mini",
+  "compaction": {
+    "auto": true,
+    "prune": true,
+  },
+  "instructions": ["instructions/*.md"],
+  "provider": {
+    "openai": {
+      "models": {
+        "gpt-5.4": {
+          "name": "GPT-5.4",
+          "reasoning": true,
+          "options": { "reasoningEffort": "high", "reasoningSummary": "auto" },
+          "limit": { "context": 1050000, "output": 128000 }
+        },
+        "gpt-5.4-mini": {
+          "name": "GPT-5.4 Mini",
+          "reasoning": true,
+          "options": { "reasoningEffort": "high", "reasoningSummary": "auto" },
+          "limit": { "context": 250000, "output": 65536 }
+        }
+        // "gpt-5.3-codex": {
+        //   "name": "GPT-5.3 Codex",
+        //   "reasoning": true,
+        //   "options": { "reasoningEffort": "high", "reasoningSummary": "auto" },
+        //   "limit": { "context": 400000, "output": 65536 }
+        // }
+      }
+    },
+    "llamacpp": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Local Llama.cpp",
+      "options": {
+        "baseURL": "http://127.0.0.1:8080/v1",
+        "apiKey": "no-key-required"
+      },
+      "models": {
+        "qwen-27b": {
+          "name": "Qwen 3.6 27B",
+          "reasoning": true,
+          "limit": { "context": 96000, "output": 65536 }
+        }
+      }
+    }
+  },
+  "plugin": [
+    "@tarquinen/opencode-dcp@latest",
+    "@franlol/opencode-md-table-formatter@0.0.3",
+    "cc-safety-net",
+    "@tarquinen/opencode-smart-title@latest",
+    "@bastiangx/opencode-unmoji@latest",
+    "opencode-ntfy.sh"
+    // "opencode-websearch-cited@1.2.0", //needs api for search. deferred for now
+  ],
+  "command": {
+    "mystatus": {
+      "description": "Query quota usage for all AI accounts",
+      "template": "Use the mystatus tool to query quota usage. Return the result as-is without modification."
+    }
+  },
+  "mcp": {
+    "context7": { "type": "remote", "url": "https://mcp.context7.com/mcp", "enabled": true },
+    "exa": { "type": "remote", "url": "https://mcp.exa.ai/mcp", "enabled": true },
+    "gh_grep": { "type": "remote", "url": "https://mcp.grep.app", "enabled": true },
+    "sqz": {
+      "type": "local",
+      "command": ["sqz-mcp"],
+      "enabled": true
+    },
+    "duckduckgo": {
+      "type": "local",
+      "command": ["uvx", "--python", "3.11", "duckduckgo-mcp-server"],
+      "enabled": true
+    }
+  },
+  "permission": {
+    "canvas_*": "allow",
+    "task": "deny",
+    "websearch": "allow",
+    "websearch_cited": "allow",
+    "sqz": "allow"
+  },
+  "default_agent": "build",
+
+"agent": {
+  "build": {
+    "description": "Supervising implementation agent. Owns the global task, delegates execution, and keeps coherence across subagents.",
+    "model": "openai/gpt-5.4",
+    "reasoningEffort": "high",
+    "options": { "reasoningSummary": "detailed" },
+    "temperature": 0.2, //.15 to .25
+    "mode": "primary",
+    "permission": {
+      "read": "allow",
+      "glob": "allow",
+      "grep": "allow",
+      "write": "deny",
+      "edit": "deny",
+      "patch": "deny",
+      
+      "duckduckgo_*": "deny",
+      "websearch*": "deny",
+      "webfetch*": "deny",
+      "context7_*": "deny",
+      "exa_*": "deny",
+      "gh_grep_*": "deny",
+      "bash": "deny",
+
+      "task": {
+        "*": "deny",
+        "code": "allow",
+        "explore": "allow",
+        "research": "allow",
+        "review": "allow"
+      }
+    }
+  },
+
+  "plan": {
+    "description": "Planning and analysis agent. Read-only by default and optimized for delegation.",
+    "model": "openai/gpt-5.4",
+    "reasoningEffort": "high",
+    "options": { "reasoningSummary": "detailed" },
+    "temperature": 0.25, //.2 to .3
+    "mode": "primary",
+    "permission": {
+      "read": "allow",
+      "glob": "allow",
+      "grep": "allow",
+      "write": "deny",
+      "edit": "deny",
+      "patch": "deny",
+
+      "duckduckgo_*": "deny",
+      "websearch*": "deny",
+      "webfetch*": "deny",
+      "context7_*": "deny",
+      "exa_*": "deny",
+      "gh_grep_*": "deny",
+      "bash": "deny",
+      
+      "task": {
+        "*": "deny",
+        "research": "allow",
+        "explore": "allow"
+      }
+    }
+  },
+
+  "code": {
+    "description": "Tactical execution agent. Makes scoped code changes and runs narrow verification commands.",
+    "hidden": true,
+    //REMOTE
+    "model": "openai/gpt-5.4-mini",
+    "reasoningEffort": "medium",
+    "temperature": 0.6, //.55 to .6
+    "options": { "reasoningSummary": "auto" },
+    "mode": "subagent",
+    "permission": {
+      "read": "allow",
+      "glob": "allow",
+      "grep": "allow",
+      "write": "allow",
+      "edit": "allow",
+      "bash": "allow",
+      
+      "task": {
+        "*": "deny"
+      }
+    }
+  },
+
+  "review": {
+    "description": "Strict read-only reviewer focused on correctness, regressions, and scope control.",
+    "model": "openai/gpt-5.4-mini",
+    "reasoningEffort": "medium",   // correctness review, no need for heavy reasoning
+    "options": { "reasoningSummary": "auto" },
+    "temperature": 0.1, //.05 to .15
+    "mode": "subagent",
+    "permission": {
+      "read": "allow",
+      "glob": "allow",
+      "grep": "allow",
+      "write": "deny",
+      "edit": "deny",
+      "bash": {
+        "git status*": "allow",
+        "git diff*": "allow",
+        "git log*": "allow",
+        "*": "deny"
+      },
+      "task": {
+        "*": "deny"
+      }
+    }
+  },
+
+  "research": {
+    "description": "Deep research agent. Decomposes questions, delegates retrieval to fetcher, and synthesizes sourced conclusions.",
+    "model": "openai/gpt-5.4-mini",
+    "reasoningEffort": "medium",
+    "options": { "reasoningSummary": "detailed" },
+    "temperature": 0.35, //.3 to .45
+    "mode": "subagent",
+    "permission": {
+      "read": "allow",
+      "glob": "allow",
+      "grep": "allow",
+      "write": "deny",
+      "edit": "allow",
+      "websearch": "deny",
+      "webfetch": "deny",
+      "bash": "deny",
+      "task": {
+        "*": "deny",
+        "fetch": "allow"
+      }
+    }
+  },
+
+  "fetch": {
+    "description": "Web retrieval worker. Executes searches and fetches, extracts relevant findings, and returns structured results without synthesis.",
+    "model": "openai/gpt-5.4-mini",
+    "reasoningEffort": "low",   // retrieval worker, no synthesis needed
+    "options": { "reasoningSummary": "auto" },
+    "temperature": 0.1, //0 or .1
+    "mode": "subagent",
+    "hidden": true,
+    "permission": {
+      "websearch": "allow",
+      "webfetch": "allow",
+      "read": "deny",
+      "glob": "deny",
+      "grep": "deny",
+      "write": "deny",
+      "edit": "deny",
+      "bash": "deny",
+      "task": {
+        "*": "deny"
+      }
+    }
+  },
+
+  "explore": {
+    "description": "Read-only codebase scout for reconnaissance and file discovery.",
+    "model": "openai/gpt-5.4-mini",
+    "reasoningEffort": "low",
+    "options": { "reasoningSummary": "auto" },
+    "hidden": true,
+    "temperature": 0.2, //0 to .2
+    "mode": "subagent",
+    "permission": {
+      "read": "allow",
+      "glob": "allow",
+      "grep": "allow",
+      "write": "deny",
+      "edit": "deny",
+      "bash": {
+        "ls *": "allow",
+        "tree *": "allow",
+        "cat *": "allow",
+        "grep *": "allow",
+        "rg *": "allow",
+        "*": "deny"
+      },
+      "task": {
+        "*": "deny"
+      }
+    }
+  }
+}
+}

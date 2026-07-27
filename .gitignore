@@ -1,0 +1,10 @@
+# private overlays
+opencode.private.json
+opencode.private.local.json
+
+# common junk
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+node_modules/

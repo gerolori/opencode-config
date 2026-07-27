@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "llamacpp/qwen-27b",
+  "agent": {
+    "build": { "model": "llamacpp/qwen-27b", "reasoningEffort": "high" },
+    "plan": { "model": "llamacpp/qwen-27b", "reasoningEffort": "high" },
+    "code": { "model": "llamacpp/qwen-27b", "reasoningEffort": "high", "temperature": 0.3 },
+    "review": { "model": "llamacpp/qwen-27b", "reasoningEffort": "medium" },
+    "research": { "model": "llamacpp/qwen-27b", "reasoningEffort": "medium" },
+    "fetch": { "model": "llamacpp/qwen-27b", "reasoningEffort": "low" },
+    "explore": { "model": "llamacpp/qwen-27b", "reasoningEffort": "low" }
+  }
+}
