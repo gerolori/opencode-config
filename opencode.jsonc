@@ -1,33 +1,30 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "autoupdate": true,
-  "model": "openai/gpt-5.4",
+  "model": "openrouter/openai/gpt-5.6-luna",
   "compaction": {
     "auto": true,
     "prune": true,
   },
   "instructions": ["instructions/*.md"],
   "provider": {
-    "openai": {
+    "openrouter": {
+      "options": {
+        "baseURL": "https://openrouter.ai/api/v1",
+        "apiKey": "{env:OPENROUTER_API_KEY}"
+      },
       "models": {
-        "gpt-5.4": {
-          "name": "GPT-5.4",
+        "gpt-5.6-luna": {
+          "name": "GPT-5.6 Luna",
           "reasoning": true,
           "options": { "reasoningEffort": "high", "reasoningSummary": "auto" },
           "limit": { "context": 1050000, "output": 128000 }
         },
-        "gpt-5.4-mini": {
-          "name": "GPT-5.4 Mini",
-          "reasoning": true,
-          "options": { "reasoningEffort": "high", "reasoningSummary": "auto" },
-          "limit": { "context": 250000, "output": 65536 }
+        "deepseek-v4-flash": {
+          "name": "DeepSeek V4 Flash",
+          "reasoning": false,
+          "limit": { "context": 128000, "output": 8192 }
         }
-        // "gpt-5.3-codex": {
-        //   "name": "GPT-5.3 Codex",
-        //   "reasoning": true,
-        //   "options": { "reasoningEffort": "high", "reasoningSummary": "auto" },
-        //   "limit": { "context": 400000, "output": 65536 }
-        // }
       }
     },
     "llamacpp": {
@@ -67,13 +64,41 @@
     "gh_grep": { "type": "remote", "url": "https://mcp.grep.app", "enabled": true },
     "sqz": {
       "type": "local",
-      "command": ["sqz-mcp", "--transport", "stdio"],
+      "command": ["C:\\Users\\hermes\\.cargo\\bin\\sqz-mcp.exe"],
       "enabled": true
     },
     "duckduckgo": {
       "type": "local",
-      "command": ["uvx", "--python", "3.11", "duckduckgo-mcp-server"],
+      "command": [
+        "C:\\Users\\hermes\\AppData\\Local\\Programs\\Python\\Python39\\Scripts\\uvx.exe",
+        "--python", "3.11",
+        "duckduckgo-mcp-server" // Calling the package's entry point directly
+      ],
       "enabled": true
+    },
+    "semble": {
+      "type": "local",
+      "command": [
+        "uv",
+        "--directory",
+        "C:/Users/hermes/mcp-servers/semble",
+        "run",
+        "semble"
+      ],
+      "enabled": true
+    },
+    "home_assistant": {
+      "type": "remote",
+      "url": "https://homeassistant.gerosalorenzo.com/api/mcp",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI2Y2UwMTJkYWYwZTA0MzY5YTY3MTdmNDg3OWVlNzM2YyIsImlhdCI6MTc3OTQzNzM1NiwiZXhwIjoyMDk0Nzk3MzU2fQ.wsAXlKmXNnOXxB2KNLp4LFvCwWeQPXBFeQ6tL7Z1Pjg"
+      },
+      "enabled": true
+    },
+    "composio": {
+      "type": "remote",
+      "url": "https://connect.composio.dev/mcp",
+      "oauth": {}
     }
   },
   "permission": {
@@ -88,7 +113,7 @@
 "agent": {
   "build": {
     "description": "Supervising implementation agent. Owns the global task, delegates execution, and keeps coherence across subagents.",
-    "model": "openai/gpt-5.4",
+    "model": "openrouter/openai/gpt-5.6-luna",
     "reasoningEffort": "high",
     "options": { "reasoningSummary": "detailed" },
     "temperature": 0.2, //.15 to .25
@@ -121,7 +146,7 @@
 
   "plan": {
     "description": "Planning and analysis agent. Read-only by default and optimized for delegation.",
-    "model": "openai/gpt-5.4",
+    "model": "openrouter/openai/gpt-5.6-luna",
     "reasoningEffort": "high",
     "options": { "reasoningSummary": "detailed" },
     "temperature": 0.25, //.2 to .3
@@ -154,7 +179,7 @@
     "description": "Tactical execution agent. Makes scoped code changes and runs narrow verification commands.",
     "hidden": true,
     //REMOTE
-    "model": "openai/gpt-5.4-mini",
+    "model": "openrouter/deepseek/deepseek-v4-flash",
     "reasoningEffort": "medium",
     "temperature": 0.6, //.55 to .6
     "options": { "reasoningSummary": "auto" },
@@ -175,7 +200,7 @@
 
   "review": {
     "description": "Strict read-only reviewer focused on correctness, regressions, and scope control.",
-    "model": "openai/gpt-5.4-mini",
+    "model": "openrouter/deepseek/deepseek-v4-flash",
     "reasoningEffort": "medium",   // correctness review, no need for heavy reasoning
     "options": { "reasoningSummary": "auto" },
     "temperature": 0.1, //.05 to .15
@@ -200,7 +225,7 @@
 
   "research": {
     "description": "Deep research agent. Decomposes questions, delegates retrieval to fetcher, and synthesizes sourced conclusions.",
-    "model": "openai/gpt-5.4-mini",
+    "model": "openrouter/deepseek/deepseek-v4-flash",
     "reasoningEffort": "medium",
     "options": { "reasoningSummary": "detailed" },
     "temperature": 0.35, //.3 to .45
@@ -223,7 +248,7 @@
 
   "fetch": {
     "description": "Web retrieval worker. Executes searches and fetches, extracts relevant findings, and returns structured results without synthesis.",
-    "model": "openai/gpt-5.4-mini",
+    "model": "openrouter/deepseek/deepseek-v4-flash",
     "reasoningEffort": "low",   // retrieval worker, no synthesis needed
     "options": { "reasoningSummary": "auto" },
     "temperature": 0.1, //0 or .1
@@ -246,7 +271,7 @@
 
   "explore": {
     "description": "Read-only codebase scout for reconnaissance and file discovery.",
-    "model": "openai/gpt-5.4-mini",
+    "model": "openrouter/deepseek/deepseek-v4-flash",
     "reasoningEffort": "low",
     "options": { "reasoningSummary": "auto" },
     "hidden": true,
