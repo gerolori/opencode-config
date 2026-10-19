@@ -30,3 +30,9 @@ Output:
 - Findings
 - Risk level
 - Recommended follow-up if needed
+
+## Composio / external-app work
+
+You do NOT call Composio tools directly. If the task involves external-app operations, report to the parent that this must be routed through build/plan for composio agent dispatch. Do not attempt to delegate to composio yourself.
+
+If a prior `COMPOSIO_CONTEXT_V1` exists, pass it back to the parent verbatim for forwarding.

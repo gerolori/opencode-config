@@ -3,6 +3,7 @@
 ## Layout
 
 - `opencode.jsonc` — safe public config
+- `dcp.jsonc` — dynamic context pruning plugin config (source-controlled)
 - `opencode.private.local.example.json` — optional local-only overlay template
 
 The copied `agents/`, `commands/`, `instructions/`, `profiles/`, and `skills/`
@@ -91,6 +92,13 @@ In `opencode`, run `/connect` to sign into OpenAI.
 If you do not want Home Assistant or `semble`, you can stop here and use the
 shared config only.
 
+### Home Assistant token
+
+The public `opencode.jsonc` references the Home Assistant bearer token via
+`{env:HA_BEARER_TOKEN}`. Set this environment variable to your HA long-lived
+access token before starting opencode, or override the MCP `headers` block in
+your private overlay.
+
 If you do want a local overlay:
 
 ```bash
@@ -145,7 +153,7 @@ your untracked overlay with JSON like this:
 
 ## Notes
 
-- `opencode.jsonc` is intentionally safe to share.
+- `opencode.jsonc` and `dcp.jsonc` are intentionally safe to share.
 - The repo is safe to publish without any private overlay tracked.
 - `opencode.private.json` and `opencode.private.local.json` should stay
   untracked; `.gitignore` covers them.

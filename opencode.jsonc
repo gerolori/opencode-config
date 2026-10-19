@@ -1,18 +1,16 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "autoupdate": true,
-  "model": "openrouter/openai/gpt-5.6-luna",
+  "model": "openrouter/openai/gpt-6-luna",
   "compaction": {
     "auto": true,
-    "prune": true,
+    "keep": { "tokens": 40000 },
+    "buffer": 100000
   },
   "instructions": ["instructions/*.md"],
   "provider": {
     "openrouter": {
-      "options": {
-        "baseURL": "https://openrouter.ai/api/v1",
-        "apiKey": "{env:OPENROUTER_API_KEY}"
-      },
+      "options": {},
       "models": {
         "gpt-5.6-luna": {
           "name": "GPT-5.6 Luna",
@@ -20,10 +18,23 @@
           "options": { "reasoningEffort": "high", "reasoningSummary": "auto" },
           "limit": { "context": 1050000, "output": 128000 }
         },
-        "deepseek-v4-flash": {
-          "name": "DeepSeek V4 Flash",
+        "gpt-6-luna": {
+          "name": "GPT-6 Luna",
+          "reasoning": true,
+          "options": { "reasoningEffort": "high", "reasoningSummary": "auto" },
+          "limit": { "context": 1050000, "output": 128000 }
+        },
+        "deepseek-v4.1-flash-1017": {
+          "name": "DeepSeek V4.1 Flash 1017",
+          "reasoning": true,
+          "options": { "reasoningEffort": "medium", "reasoningSummary": "auto" },
+          "limit": { "context": 1048576, "output": 32768 }
+        },
+        "deepseek-v4.1-flash": {
+          "name": "DeepSeek V4.1 Flash",
           "reasoning": false,
-          "limit": { "context": 128000, "output": 8192 }
+          "options": { "reasoningSummary": "auto" },
+          "limit": { "context": 1048576, "output": 16384 }
         }
       }
     },
@@ -50,7 +61,6 @@
     "@tarquinen/opencode-smart-title@latest",
     "@bastiangx/opencode-unmoji@latest",
     "opencode-ntfy.sh"
-    // "opencode-websearch-cited@1.2.0", //needs api for search. deferred for now
   ],
   "command": {
     "mystatus": {
@@ -72,7 +82,7 @@
       "command": [
         "C:\\Users\\hermes\\AppData\\Local\\Programs\\Python\\Python39\\Scripts\\uvx.exe",
         "--python", "3.11",
-        "duckduckgo-mcp-server" // Calling the package's entry point directly
+        "duckduckgo-mcp-server"
       ],
       "enabled": true
     },
@@ -91,14 +101,15 @@
       "type": "remote",
       "url": "https://homeassistant.gerosalorenzo.com/api/mcp",
       "headers": {
-        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI2Y2UwMTJkYWYwZTA0MzY5YTY3MTdmNDg3OWVlNzM2YyIsImlhdCI6MTc3OTQzNzM1NiwiZXhwIjoyMDk0Nzk3MzU2fQ.wsAXlKmXNnOXxB2KNLp4LFvCwWeQPXBFeQ6tL7Z1Pjg"
+        "Authorization": "Bearer {env:HA_BEARER_TOKEN}"
       },
       "enabled": true
     },
     "composio": {
       "type": "remote",
       "url": "https://connect.composio.dev/mcp",
-      "oauth": {}
+      "oauth": {},
+      "enabled": true
     }
   },
   "permission": {
@@ -109,14 +120,15 @@
     "sqz": "allow"
   },
   "default_agent": "build",
+  "subagent_depth": 2,
 
 "agent": {
   "build": {
-    "description": "Supervising implementation agent. Owns the global task, delegates execution, and keeps coherence across subagents.",
-    "model": "openrouter/openai/gpt-5.6-luna",
+    "description": "Supervising implementation agent. Owns the global task, delegates execution, and keeps coherence across subagents. When Composio is needed, delegate the complete external-app workflow to the composio agent in one task; pass any prior COMPOSIO_CONTEXT_V1 verbatim; do not split discovery/connection/execution across multiple children. Prevent duplicate tool calls: if a tool already returned data for the same query, do not call it again. After native compaction resumes, re-read the task objective and continue from the last actionable state without repeating completed work.",
+    "model": "openrouter/openai/gpt-6-luna",
     "reasoningEffort": "high",
     "options": { "reasoningSummary": "detailed" },
-    "temperature": 0.2, //.15 to .25
+    "temperature": 0.2,
     "mode": "primary",
     "permission": {
       "read": "allow",
@@ -125,13 +137,14 @@
       "write": "deny",
       "edit": "deny",
       "patch": "deny",
-      
+
       "duckduckgo_*": "deny",
       "websearch*": "deny",
       "webfetch*": "deny",
       "context7_*": "deny",
       "exa_*": "deny",
       "gh_grep_*": "deny",
+      "composio_*": "deny",
       "bash": "deny",
 
       "task": {
@@ -139,17 +152,18 @@
         "code": "allow",
         "explore": "allow",
         "research": "allow",
-        "review": "allow"
+        "review": "allow",
+        "composio": "allow"
       }
     }
   },
 
   "plan": {
-    "description": "Planning and analysis agent. Read-only by default and optimized for delegation.",
-    "model": "openrouter/openai/gpt-5.6-luna",
+    "description": "Planning and analysis agent. Read-only by default and optimized for delegation. When Composio is needed, delegate the complete external-app workflow to the composio agent in one task; pass any prior COMPOSIO_CONTEXT_V1 verbatim; do not ask for full tool catalogs or repeated connection details. Prevent duplicate tool calls: if a tool already returned data for the same query, do not call it again. After native compaction resumes, re-read the task objective and continue from the last actionable state without repeating completed work.",
+    "model": "openrouter/openai/gpt-6-luna",
     "reasoningEffort": "high",
     "options": { "reasoningSummary": "detailed" },
-    "temperature": 0.25, //.2 to .3
+    "temperature": 0.25,
     "mode": "primary",
     "permission": {
       "read": "allow",
@@ -165,23 +179,24 @@
       "context7_*": "deny",
       "exa_*": "deny",
       "gh_grep_*": "deny",
+      "composio_*": "deny",
       "bash": "deny",
-      
+
       "task": {
         "*": "deny",
         "research": "allow",
-        "explore": "allow"
+        "explore": "allow",
+        "composio": "allow"
       }
     }
   },
 
   "code": {
-    "description": "Tactical execution agent. Makes scoped code changes and runs narrow verification commands.",
+    "description": "Tactical execution agent. Makes scoped code changes and runs narrow verification commands. Do NOT call Composio tools directly; only build/plan may route to the composio agent.",
     "hidden": true,
-    //REMOTE
-    "model": "openrouter/deepseek/deepseek-v4-flash",
+    "model": "openrouter/deepseek-v4.1-flash-1017",
     "reasoningEffort": "medium",
-    "temperature": 0.6, //.55 to .6
+    "temperature": 0.35,
     "options": { "reasoningSummary": "auto" },
     "mode": "subagent",
     "permission": {
@@ -190,8 +205,9 @@
       "grep": "allow",
       "write": "allow",
       "edit": "allow",
+      "composio_*": "deny",
       "bash": "allow",
-      
+
       "task": {
         "*": "deny"
       }
@@ -199,11 +215,11 @@
   },
 
   "review": {
-    "description": "Strict read-only reviewer focused on correctness, regressions, and scope control.",
-    "model": "openrouter/deepseek/deepseek-v4-flash",
-    "reasoningEffort": "medium",   // correctness review, no need for heavy reasoning
+    "description": "Strict read-only reviewer focused on correctness, regressions, and scope control. Do NOT call Composio tools directly; only build/plan may route to the composio agent.",
+    "model": "openrouter/deepseek-v4.1-flash-1017",
+    "reasoningEffort": "medium",
     "options": { "reasoningSummary": "auto" },
-    "temperature": 0.1, //.05 to .15
+    "temperature": 0.1,
     "mode": "subagent",
     "permission": {
       "read": "allow",
@@ -211,6 +227,7 @@
       "grep": "allow",
       "write": "deny",
       "edit": "deny",
+      "composio_*": "deny",
       "bash": {
         "git status*": "allow",
         "git diff*": "allow",
@@ -224,11 +241,11 @@
   },
 
   "research": {
-    "description": "Deep research agent. Decomposes questions, delegates retrieval to fetcher, and synthesizes sourced conclusions.",
-    "model": "openrouter/deepseek/deepseek-v4-flash",
+    "description": "Deep research agent. Decomposes questions, delegates retrieval to fetcher, and synthesizes sourced conclusions. Do NOT call Composio tools directly; only build/plan may route to the composio agent.",
+    "model": "openrouter/deepseek-v4.1-flash-1017",
     "reasoningEffort": "medium",
     "options": { "reasoningSummary": "detailed" },
-    "temperature": 0.35, //.3 to .45
+    "temperature": 0.35,
     "mode": "subagent",
     "permission": {
       "read": "allow",
@@ -238,6 +255,7 @@
       "edit": "allow",
       "websearch": "deny",
       "webfetch": "deny",
+      "composio_*": "deny",
       "bash": "deny",
       "task": {
         "*": "deny",
@@ -247,11 +265,11 @@
   },
 
   "fetch": {
-    "description": "Web retrieval worker. Executes searches and fetches, extracts relevant findings, and returns structured results without synthesis.",
-    "model": "openrouter/deepseek/deepseek-v4-flash",
-    "reasoningEffort": "low",   // retrieval worker, no synthesis needed
+    "description": "Web retrieval worker. Executes searches and fetches, extracts relevant findings, and returns structured results without synthesis. Do NOT call Composio tools directly; only build/plan may route to the composio agent.",
+    "model": "openrouter/deepseek-v4.1-flash",
+    "reasoningEffort": "low",
     "options": { "reasoningSummary": "auto" },
-    "temperature": 0.1, //0 or .1
+    "temperature": 0.1,
     "mode": "subagent",
     "hidden": true,
     "permission": {
@@ -262,6 +280,7 @@
       "grep": "deny",
       "write": "deny",
       "edit": "deny",
+      "composio_*": "deny",
       "bash": "deny",
       "task": {
         "*": "deny"
@@ -270,12 +289,12 @@
   },
 
   "explore": {
-    "description": "Read-only codebase scout for reconnaissance and file discovery.",
-    "model": "openrouter/deepseek/deepseek-v4-flash",
+    "description": "Read-only codebase scout for reconnaissance and file discovery. Do NOT call Composio tools directly; only build/plan may route to the composio agent.",
+    "model": "openrouter/deepseek-v4.1-flash",
     "reasoningEffort": "low",
     "options": { "reasoningSummary": "auto" },
     "hidden": true,
-    "temperature": 0.2, //0 to .2
+    "temperature": 0.2,
     "mode": "subagent",
     "permission": {
       "read": "allow",
@@ -283,6 +302,7 @@
       "grep": "allow",
       "write": "deny",
       "edit": "deny",
+      "composio_*": "deny",
       "bash": {
         "ls *": "allow",
         "tree *": "allow",
@@ -291,6 +311,27 @@
         "rg *": "allow",
         "*": "deny"
       },
+      "task": {
+        "*": "deny"
+      }
+    }
+  },
+
+  "composio": {
+    "description": "Dedicated Composio workflow agent. Owns discovery, selected schema retrieval, auth/connection checks, execution, verification, and final reporting internally. Reuses a supplied COMPOSIO_CONTEXT_V1 when available; performs one end-to-end workflow per invocation and returns a compact verified summary plus updated context. Does not expose full tool catalogs/schemas unless explicitly requested for debugging. Never delegates further. Always passes model hint \"deepseek/deepseek-v4.1-flash-1017\" to COMPOSIO_SEARCH_TOOLS for optimal planning.",
+    "model": "openrouter/deepseek-v4.1-flash-1017",
+    "reasoningEffort": "medium",
+    "options": { "reasoningSummary": "auto" },
+    "temperature": 0.35,
+    "mode": "subagent",
+    "permission": {
+      "read": "allow",
+      "glob": "allow",
+      "grep": "allow",
+      "composio_*": "allow",
+      "write": "deny",
+      "edit": "deny",
+      "bash": "deny",
       "task": {
         "*": "deny"
       }

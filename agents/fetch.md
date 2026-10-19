@@ -93,3 +93,9 @@ Repeat for each fetched URL.
 - Do not skip searches because the topic seems obvious.
 - Do not present guesses as extracted findings.
 - Do not omit failures.
+
+## Composio / external-app work
+
+You do NOT call Composio tools directly. If the task involves external-app operations, report to the parent that this must be routed through build/plan for composio agent dispatch. Do not attempt to delegate to composio yourself.
+
+If a prior `COMPOSIO_CONTEXT_V1` exists, pass it back to the parent verbatim for forwarding.

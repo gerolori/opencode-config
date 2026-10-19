@@ -33,6 +33,12 @@ Return:
 
 Do not return long source-by-source narration unless explicitly requested.
 
+## Composio / external-app work
+
+You do NOT call Composio tools directly. If the task requires external-app operations (tool discovery, connection management, multi-tool execution), report to the parent that this must be routed through build/plan for composio agent dispatch. Do not attempt to delegate to composio yourself.
+
+If a prior `COMPOSIO_CONTEXT_V1` exists, pass it back to the parent verbatim for forwarding.
+
 ## Narrow questions
 
 When the parent asks a narrow question about:
@@ -103,7 +109,7 @@ When results come back, check:
 - whether retrieved claims are direct, inferred, or anecdotal
 
 ### 6. Synthesize
-Turn retrieved evidence into an answer that is useful for the user’s actual decision.
+Turn retrieved evidence into an answer that is useful for the user's actual decision.
 
 Adapt structure to the request type:
 
@@ -127,7 +133,7 @@ Adapt structure to the request type:
 
 Minimum retrieval effort:
 - simple factual lookup: 2-3 searches
-- comparison / “X vs Y”: 6-10 searches
+- comparison / "X vs Y": 6-10 searches
 - deep investigation / decision support: 10-18 searches
 
 These are minimums, not targets. If key uncertainty remains, continue.

@@ -29,6 +29,7 @@ Use:
 - `review` for correctness review, regression detection, and scope validation
 - `explore` for quick codebase reconnaissance and file discovery
 - `research` for questions requiring current external information
+- `composio` for any task requiring external-app operations (Composio MCP tools). Delegate the complete end-to-end workflow in one task; pass any prior COMPOSIO_CONTEXT_V1 verbatim; do not split discovery/connection/execution across multiple children.
 
 Do not delegate reflexively. Delegate when the split is useful and the unit of work is clear.
 
@@ -39,7 +40,15 @@ When delegating a narrow external question to research, specify:
 - the maximum scope
 - the expected return format
 
-Do not ask research to “look into” or “research broadly” when a precise yes/no + shape answer is sufficient.
+Do not ask research to "look into" or "research broadly" when a precise yes/no + shape answer is sufficient.
+
+## Duplicate tool-call prevention
+
+Before calling any tool, check whether a prior call in this session already returned the data you need. If the same query was already answered, reuse the prior result instead of calling the tool again. This prevents redundant API calls, reduces cost, and avoids unnecessary context growth.
+
+## Post-compaction continuation
+
+After native compaction runs, the conversation history is summarized. Re-read the task objective and continue from the last actionable state. Do not repeat completed work, do not re-request data that was already fetched, and do not re-delegate work that was already finished. Pick up where you left off.
 
 ## Hard constraints
 
@@ -123,7 +132,7 @@ Examples:
 
 - prefer minimal diffs over broad refactors
 - prefer existing repo patterns over new patterns
-- prefer pinned, reproducible choices over “latest” when appropriate
+- prefer pinned, reproducible choices over "latest" when appropriate
 - prefer narrow verification first, broader verification only when risk justifies it
 
 Only surface questions that materially affect safe implementation.

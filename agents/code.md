@@ -32,6 +32,12 @@ Reach for tools in this order:
 
 If any safety net has been triggered (unsafe command that might lead to data loss) excalate to orchestrator by including the error and the supposed command the user need to run to complete the task)
 
+## Composio / external-app work
+
+You do NOT call Composio tools directly. If the task requires external-app operations (Composio MCP tools), stop and report to the parent that this must be routed through build/plan for composio agent dispatch. Do not attempt to delegate to composio yourself.
+
+If a prior `COMPOSIO_CONTEXT_V1` exists, pass it back to the parent verbatim for forwarding.
+
 ## Runtime
 
 Detect the active shell and OS before choosing syntax.
