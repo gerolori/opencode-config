@@ -64,6 +64,7 @@ link_path() {
 
 link_path "$repo_dir/opencode.jsonc" "$target_dir/opencode.json"
 link_path "$repo_dir/dcp.jsonc" "$target_dir/dcp.jsonc"
+link_path "$repo_dir/smart-title.jsonc" "$target_dir/smart-title.jsonc"
 link_path "$repo_dir/agents" "$target_dir/agents"
 link_path "$repo_dir/commands" "$target_dir/commands"
 link_path "$repo_dir/instructions" "$target_dir/instructions"

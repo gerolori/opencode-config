@@ -4,6 +4,7 @@
 
 - `opencode.jsonc` — safe public config
 - `dcp.jsonc` — dynamic context pruning plugin config (source-controlled)
+- `smart-title.jsonc` — smart title plugin config (source-controlled)
 - `opencode.private.local.example.json` — optional local-only overlay template
 
 The copied `agents/`, `commands/`, `instructions/`, `profiles/`, and `skills/`
