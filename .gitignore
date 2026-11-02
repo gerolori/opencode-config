@@ -1,6 +1,5 @@
 node_modules
-package.json
-bun.lock
+package-lock.json
 antigravity-accounts.json
 antigravity-accounts.json.*.tmp
 antigravity-signature-cache.json

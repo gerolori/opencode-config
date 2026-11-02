@@ -3,10 +3,10 @@ description: Run dependency-aware beads triage
 agent: plan
 ---
 
-Load the beads-bv skill if needed.
-Run the repository's standard triage workflow.
-Use the project wrapper for triage instead of constructing raw bv shell manually.
-Summarize:
+Delegate to the `track` subagent via the task tool. Do not run `bv` or `br` directly from this primary.
+
+Ask `track` to run the standard triage workflow using only `bv --robot-*` commands, then report:
+
 - top actionable item
 - blockers
 - quick wins

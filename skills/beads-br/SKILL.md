@@ -1,6 +1,6 @@
 ---
 name: beads-br
-description: Use Beads Rust commands for creating, updating, and closing Beads issues on this Windows setup.
+description: Use Beads Rust commands for creating, updating, and closing Beads issues (Windows-specific flags noted).
 compatibility: opencode
 ---
 # Beads BR Workflow
@@ -9,7 +9,7 @@ Use this skill when interacting with `br`, the Beads issue-management tool.
 
 ## Purpose
 
-This skill defines the safe operating rules for `br` on this Windows system.
+This skill defines the safe operating rules for `br`, with Windows-specific flags noted where they apply.
 
 `br` is the lifecycle and mutation tool for Beads:
 - create issues
@@ -20,23 +20,27 @@ This skill defines the safe operating rules for `br` on this Windows system.
 
 Use `bv` instead for graph-aware triage, prioritization, and recommendations.
 
-## Critical Windows rule
+## Windows rule
 
-On this system, every `br` command must include:
+On Windows only, every `br` command must include:
+
+```bash
+--no-db --no-auto-flush
+```
+
+This is mandatory on Windows.
+
+On other platforms, use the normal DB-backed `br` commands unless the project documents a different local convention.
+
+## Canonical suffix (Windows)
+
+On Windows, use this suffix for all `br` commands:
 
 ```bash
 --no-db --no-auto-flush
 ```
 
-This is mandatory.
-
-## Canonical suffix
-
-Use this suffix for all `br` commands:
-
-```bash
---no-db --no-auto-flush
-```
+The command examples below include the Windows suffix. On other platforms, omit `--no-db --no-auto-flush`.
 
 ## When to use
 
@@ -169,7 +173,7 @@ br create --no-db --no-auto-flush --title="Epic title" --type=epic --priority=1
 br create --no-db --no-auto-flush --title="Child task" --type=task --priority=1 --parent=<PARENT_ID>
 ```
 
-## Safe error interpretation
+## Windows error interpretation
 
 ### CONFIG_ERROR about stale database export
 Cause: expected side effect of this environment.
@@ -192,8 +196,8 @@ If a task changes both code and Beads state, commit the related `.beads/` change
 
 ## Rules
 
-- Always include `--no-db --no-auto-flush`.
-- Do not use DB-backed sync workflows.
+- On Windows, always include `--no-db --no-auto-flush`.
+- Do not use DB-backed sync workflows on Windows.
 - Use `br` for issue mutation and lifecycle operations.
 - Keep Beads changes aligned with the code changes they represent.
 

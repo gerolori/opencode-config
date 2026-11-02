@@ -112,20 +112,21 @@ bv --recipe actionable --robot-plan
 bv --recipe high-impact --robot-triage
 ```
 
-## PowerShell + sqz usage
+## Windows + sqz usage
 
-If output should be compressed with `sqz`, use a PowerShell-safe form.
+On Windows, if output should be compressed with `sqz`, use a PowerShell-safe form and the `sqz` command from `PATH`.
 
 Correct pattern:
 
 ```powershell
-$env:SQZ_CMD="bv"; bv --robot-triage 2>&1 | C:\Users\hermes\.cargo\bin\sqz.exe compress
+$env:SQZ_CMD="bv"; bv --robot-triage 2>&1 | sqz compress
 ```
 
 Do not:
 - duplicate `2>&1`
 - use shell-style env assignment in PowerShell
 - pass `--no-db` to `bv`
+- hardcode a user-specific absolute `sqz.exe` path
 
 ## Rules
 

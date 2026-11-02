@@ -1,9 +1,0 @@
-mkdir -p ~/.config/opencode/command
-cat > ~/.config/opencode/command/tokenscope.md << 'EOF'
----
-description: Analyze token usage across the current session with detailed breakdowns by category
----
-
-Call the tokenscope tool directly without delegating to other agents.
-Then cat the token-usage-output.txt. DONT DO ANYTHING ELSE WITH THE OUTPUT.
-EOF

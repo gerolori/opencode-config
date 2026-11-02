@@ -1,0 +1,26 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Host-local MCP example. Load it with OPENCODE_CONFIG; opencode merges it
+  // over the base config. It contains no credentials.
+  //
+  // Set SEMBLE_MCP_DIR / EBAY_MCP_DIR to forward-slash paths, for example:
+  //   SEMBLE_MCP_DIR=C:/Users/me/mcp-servers/semble
+  //   EBAY_MCP_DIR=C:/Users/me/mcp-servers/ebay
+  "mcp": {
+    "semble": {
+      "type": "local",
+      "command": ["uv", "--directory", "{env:SEMBLE_MCP_DIR}", "run", "semble"],
+      "enabled": true
+    },
+    "ebay": {
+      "type": "local",
+      "command": ["uv", "--directory", "{env:EBAY_MCP_DIR}", "run", "ebay-mcp"],
+      "environment": {
+        "EBAY_CLIENT_ID": "{env:EBAY_CLIENT_ID}",
+        "EBAY_CLIENT_SECRET": "{env:EBAY_CLIENT_SECRET}",
+        "EBAY_ENV": "{env:EBAY_ENV}"
+      },
+      "enabled": false
+    }
+  }
+}

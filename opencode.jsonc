@@ -1,12 +1,13 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "autoupdate": true,
-  "model": "openrouter/openai/gpt-6-luna",
-  "small_model": "openrouter/free",
+  // Pin the validated runtime; upgrade deliberately with `opencode upgrade <version>`.
+  "autoupdate": false,
+  "model": "openrouter/gpt-6-luna",
+  "small_model": "openrouter/deepseek-v4.1-flash",
   "compaction": {
     "auto": true,
-    "keep": { "tokens": 40000 },
-    "buffer": 100000
+    "preserve_recent_tokens": 40000,
+    "reserved": 100000
   },
   "instructions": ["instructions/*.md"],
   "provider": {
@@ -20,27 +21,31 @@
           "limit": { "context": 200000, "output": 16384 }
         },
         "gpt-5.6-luna": {
+          "id": "openai/gpt-5.6-luna",
           "name": "GPT-5.6 Luna",
           "reasoning": true,
           "options": { "reasoningEffort": "high", "reasoningSummary": "auto" },
           "limit": { "context": 1050000, "output": 128000 }
         },
         "gpt-6-luna": {
+          "id": "openai/gpt-6-luna",
           "name": "GPT-6 Luna",
           "reasoning": true,
           "options": { "reasoningEffort": "high", "reasoningSummary": "auto" },
           "limit": { "context": 1050000, "output": 128000 }
         },
         "deepseek-v4.1-flash-1017": {
+          "id": "deepseek/deepseek-v4.1-flash-1017",
           "name": "DeepSeek V4.1 Flash 1017",
           "reasoning": true,
-          "options": { "reasoningEffort": "medium", "reasoningSummary": "auto" },
+          "options": { "reasoningEffort": "low", "reasoningSummary": "auto" },
           "limit": { "context": 1048576, "output": 32768 }
         },
         "deepseek-v4.1-flash": {
+          "id": "deepseek/deepseek-v4.1-flash",
           "name": "DeepSeek V4.1 Flash",
-          "reasoning": false,
-          "options": { "reasoningSummary": "auto" },
+          "reasoning": true,
+          "options": { "reasoningEffort": "low", "reasoningSummary": "auto" },
           "limit": { "context": 1048576, "output": 16384 }
         }
       }
@@ -62,71 +67,61 @@
     }
   },
   "plugin": [
-    "@tarquinen/opencode-dcp@latest",
+    "@tarquinen/opencode-dcp@3.1.9",
     "@franlol/opencode-md-table-formatter@0.0.3",
-    "cc-safety-net",
-    "@tarquinen/opencode-smart-title@latest",
-    "@bastiangx/opencode-unmoji@latest",
-    "opencode-ntfy.sh"
+    "cc-safety-net@0.8.2",
+    "@tarquinen/opencode-smart-title@0.1.7",
+    "@bastiangx/opencode-unmoji@0.3.12",
+    "opencode-ntfy.sh@1.1.0"
   ],
-  "command": {
-    "mystatus": {
-      "description": "Query quota usage for all AI accounts",
-      "template": "Use the mystatus tool to query quota usage. Return the result as-is without modification."
-    }
-  },
   "mcp": {
     "context7": { "type": "remote", "url": "https://mcp.context7.com/mcp", "enabled": true },
-    "exa": { "type": "remote", "url": "https://mcp.exa.ai/mcp", "enabled": true },
+    // Base stays disabled. The policy plugin may enable this only when EXA_API_KEY is present.
+    "exa": {
+      "type": "remote",
+      "url": "https://mcp.exa.ai/mcp",
+      "enabled": false,
+      "oauth": false,
+      "headers": { "x-api-key": "{env:EXA_API_KEY}" }
+    },
     "gh_grep": { "type": "remote", "url": "https://mcp.grep.app", "enabled": true },
     "sqz": {
       "type": "local",
-      "command": ["C:\\Users\\hermes\\.cargo\\bin\\sqz-mcp.exe"],
+      // Base uses the portable PATH command; the host hook selects the Windows
+      // executable only when this is the standard command.
+      "command": ["sqz-mcp"],
       "enabled": true
     },
     "duckduckgo": {
       "type": "local",
-      "command": [
-        "C:\\Users\\hermes\\AppData\\Local\\Programs\\Python\\Python39\\Scripts\\uvx.exe",
-        "--python", "3.11",
-        "duckduckgo-mcp-server"
-      ],
+      "command": ["uvx", "--python", "3.11", "duckduckgo-mcp-server"],
       "enabled": true
     },
+    // Host-local repo. Base stays disabled; enable through a host override or plugin.
     "semble": {
       "type": "local",
-      "command": [
-        "uv",
-        "--directory",
-        "C:/Users/hermes/mcp-servers/semble",
-        "run",
-        "semble"
-      ],
-      "enabled": true
+      "command": ["uv", "--directory", "{env:SEMBLE_MCP_DIR}", "run", "semble"],
+      "enabled": false
     },
+    // Host-local repo. Disabled until the 108/108 connector failures are diagnosed.
     "ebay": {
       "type": "local",
-      "command": [
-        "uv",
-        "--directory",
-        "C:/Users/hermes/mcp-servers/ebay",
-        "run",
-        "ebay-mcp"
-      ],
+      "command": ["uv", "--directory", "{env:EBAY_MCP_DIR}", "run", "ebay-mcp"],
       "environment": {
         "EBAY_CLIENT_ID": "{env:EBAY_CLIENT_ID}",
         "EBAY_CLIENT_SECRET": "{env:EBAY_CLIENT_SECRET}",
         "EBAY_ENV": "{env:EBAY_ENV}"
       },
-      "enabled": true
+      "enabled": false
     },
     "home_assistant": {
       "type": "remote",
-      "url": "https://homeassistant.gerosalorenzo.com/api/mcp",
+      // The host hook enables this only when HA_BEARER_TOKEN is present.
+      "url": "{env:HA_MCP_URL}",
       "headers": {
         "Authorization": "Bearer {env:HA_BEARER_TOKEN}"
       },
-      "enabled": true
+      "enabled": false
     },
     "composio": {
       "type": "remote",
@@ -135,240 +130,452 @@
       "enabled": true
     }
   },
+  // Default posture: deny every unknown tool first, then re-allow only the
+  // local/native tools and explicitly configured surfaces. Last matching
+  // permission wins, so per-agent allows can override this global deny.
   "permission": {
+    "*": "deny",
+    "doom_loop": "ask",
+    "external_directory": "ask",
     "canvas_*": "allow",
-    "task": "deny",
-    "websearch": "allow",
-    "websearch_cited": "allow",
+    "read": {
+      "*": "allow",
+      "*.env": "ask",
+      "*.env.*": "ask",
+      "*.env.example": "allow"
+    },
+    "glob": "allow",
+    "grep": "allow",
+    "compress": "allow",
     "sqz": "allow",
-    // Hard boundary: denied by default; only the fetch agent explicitly allows it.
-    "ebay_*": "deny"
+    "sqz_compress": "allow",
+    "sqz_passthrough": "allow",
+    "lsp": "allow",
+    "task": "deny",
+    "websearch": "deny",
+    "websearch_cited": "deny",
+    "webfetch": "deny",
+    "context7_*": "deny",
+    "exa_*": "deny",
+    "gh_grep_*": "deny",
+    "duckduckgo_*": "deny",
+    "semble_*": "deny",
+    "composio_*": "deny",
+    "ebay_*": "deny",
+    "home_assistant_*": "deny",
+    "tinyfish_search": "deny",
+    "retrieval_control": "deny"
   },
   "default_agent": "build",
-  "subagent_depth": 2,
-
-"agent": {
-  "build": {
-    "description": "Supervising implementation agent. Owns the global task, delegates execution, and keeps coherence across subagents. When Composio is needed, delegate the complete external-app workflow to the composio agent in one task; pass any prior COMPOSIO_CONTEXT_V1 verbatim; do not split discovery/connection/execution across multiple children. Prevent duplicate tool calls: if a tool already returned data for the same query, do not call it again. After native compaction resumes, re-read the task objective and continue from the last actionable state without repeating completed work.",
-    "model": "openrouter/openai/gpt-6-luna",
-    "reasoningEffort": "high",
-    "options": { "reasoningSummary": "detailed" },
-    "temperature": 0.2,
-    "mode": "primary",
-    "permission": {
-      "read": "allow",
-      "glob": "allow",
-      "grep": "allow",
-      "write": "deny",
-      "edit": "deny",
-      "patch": "deny",
-
-      "duckduckgo_*": "deny",
-      "websearch*": "deny",
-      "webfetch*": "deny",
-      "context7_*": "deny",
-      "exa_*": "deny",
-      "gh_grep_*": "deny",
-      "composio_*": "deny",
-      "ebay_*": "deny",
-      "bash": "deny",
-
-      "task": {
-        "*": "deny",
-        "code": "allow",
-        "explore": "allow",
-        "research": "allow",
-        "review": "allow",
-        "composio": "allow"
+  "subagent_depth": 1,
+  "agent": {
+    "build": {
+      "description": "Primary supervising implementation agent. Owns the objective, research breadth, evidence sufficiency, and budget/extension decisions. Delegates execution and one end-to-end Composio workflow.",
+      "model": "openrouter/gpt-6-luna",
+      "options": { "reasoningEffort": "high", "reasoningSummary": "detailed" },
+      "temperature": 0.2,
+      "mode": "primary",
+      "permission": {
+        "read": {
+          "*": "allow",
+          "*.env": "ask",
+          "*.env.*": "ask",
+          "*.env.example": "allow"
+        },
+        "glob": "allow",
+        "grep": "allow",
+        "skill": "allow",
+        "question": "allow",
+        "todowrite": "allow",
+        "plan_enter": "allow",
+        "plan_exit": "allow",
+        "sqz_sqz_read_file": "allow",
+        "sqz_sqz_list_dir": "allow",
+        "sqz_sqz_grep": "allow",
+        "sqz_expand": "allow",
+        "write": "deny",
+        "edit": "deny",
+        "patch": "deny",
+        "bash": "deny",
+        "websearch": "deny",
+        "websearch_cited": "deny",
+        "webfetch": "deny",
+        "context7_*": "deny",
+        "exa_*": "deny",
+        "gh_grep_*": "deny",
+        "duckduckgo_*": "deny",
+        "semble_*": "deny",
+        "composio_*": "deny",
+        "ebay_*": "deny",
+        "tinyfish_search": "deny",
+        // Preserve the authorized Home Assistant capability on the interactive primary.
+        "home_assistant_*": "allow",
+        // Parent-only budget extension for a fetch child; the plugin enforces target/action.
+        "retrieval_control": "allow",
+        "task": {
+          "*": "deny",
+          "code": "allow",
+          "explore": "allow",
+          "fetch": "allow",
+          "track": "allow",
+          "review": "allow",
+          "composio": "allow"
+        }
       }
-    }
-  },
+    },
 
-  "plan": {
-    "description": "Planning and analysis agent. Read-only by default and optimized for delegation. When Composio is needed, delegate the complete external-app workflow to the composio agent in one task; pass any prior COMPOSIO_CONTEXT_V1 verbatim; do not ask for full tool catalogs or repeated connection details. Prevent duplicate tool calls: if a tool already returned data for the same query, do not call it again. After native compaction resumes, re-read the task objective and continue from the last actionable state without repeating completed work.",
-    "model": "openrouter/openai/gpt-6-luna",
-    "reasoningEffort": "high",
-    "options": { "reasoningSummary": "detailed" },
-    "temperature": 0.25,
-    "mode": "primary",
-    "permission": {
-      "read": "allow",
-      "glob": "allow",
-      "grep": "allow",
-      "write": "deny",
-      "edit": "deny",
-      "patch": "deny",
-
-      "duckduckgo_*": "deny",
-      "websearch*": "deny",
-      "webfetch*": "deny",
-      "context7_*": "deny",
-      "exa_*": "deny",
-      "gh_grep_*": "deny",
-      "composio_*": "deny",
-      "ebay_*": "deny",
-      "bash": "deny",
-
-      "task": {
-        "*": "deny",
-        "research": "allow",
-        "explore": "allow",
-        "composio": "allow"
+    "plan": {
+      "description": "Primary planning agent. Read-only; delegates exploration, retrieval, tracker operations, and one end-to-end Composio workflow. Does not delegate code.",
+      "model": "openrouter/gpt-6-luna",
+      "options": { "reasoningEffort": "high", "reasoningSummary": "detailed" },
+      "temperature": 0.25,
+      "mode": "primary",
+      "permission": {
+        "read": {
+          "*": "allow",
+          "*.env": "ask",
+          "*.env.*": "ask",
+          "*.env.example": "allow"
+        },
+        "glob": "allow",
+        "grep": "allow",
+        "skill": "allow",
+        "question": "allow",
+        "todowrite": "allow",
+        "plan_enter": "allow",
+        "plan_exit": "allow",
+        "sqz_sqz_read_file": "allow",
+        "sqz_sqz_list_dir": "allow",
+        "sqz_sqz_grep": "allow",
+        "sqz_expand": "allow",
+        "write": "deny",
+        "edit": "deny",
+        "patch": "deny",
+        "bash": "deny",
+        "websearch": "deny",
+        "websearch_cited": "deny",
+        "webfetch": "deny",
+        "context7_*": "deny",
+        "exa_*": "deny",
+        "gh_grep_*": "deny",
+        "duckduckgo_*": "deny",
+        "semble_*": "deny",
+        "composio_*": "deny",
+        "ebay_*": "deny",
+        "tinyfish_search": "deny",
+        "home_assistant_*": "deny",
+        "retrieval_control": "allow",
+        "task": {
+          "*": "deny",
+          "explore": "allow",
+          "fetch": "allow",
+          "track": "allow",
+          "composio": "allow"
+        }
       }
-    }
-  },
+    },
 
-  "code": {
-    "description": "Tactical execution agent. Makes scoped code changes and runs narrow verification commands. Do NOT call Composio tools directly; only build/plan may route to the composio agent.",
-    "hidden": true,
-    "model": "openrouter/deepseek-v4.1-flash-1017",
-    "reasoningEffort": "medium",
-    "temperature": 0.35,
-    "options": { "reasoningSummary": "auto" },
-    "mode": "subagent",
-    "permission": {
-      "read": "allow",
-      "glob": "allow",
-      "grep": "allow",
-      "write": "allow",
-      "edit": "allow",
-      "composio_*": "deny",
-      "ebay_*": "deny",
-      "bash": "allow",
-
-      "task": {
-        "*": "deny"
+    "code": {
+      "description": "Scoped implementation worker. Local code edits and narrow verification only. No external web/MCP, no children.",
+      "hidden": true,
+      "model": "openrouter/deepseek-v4.1-flash-1017",
+      "options": { "reasoningEffort": "low", "reasoningSummary": "auto" },
+      "temperature": 0.35,
+      "mode": "subagent",
+      "permission": {
+        "read": {
+          "*": "allow",
+          "*.env": "ask",
+          "*.env.*": "ask",
+          "*.env.example": "allow"
+        },
+        "glob": "allow",
+        "grep": "allow",
+        "skill": "allow",
+        "sqz_sqz_read_file": "allow",
+        "sqz_sqz_list_dir": "allow",
+        "sqz_sqz_grep": "allow",
+        "sqz_expand": "allow",
+        "write": "allow",
+        "edit": "allow",
+        "patch": "allow",
+        "apply_patch": "allow",
+        "bash": {
+          "*": "allow",
+          // Not a network sandbox: package installs and similar tools can still
+          // reach the network. Deny only obvious direct web-fetch commands.
+          "curl *": "deny",
+          "curl.exe *": "deny",
+          "wget *": "deny",
+          "wget.exe *": "deny",
+          "Invoke-WebRequest*": "deny",
+          "Invoke-RestMethod*": "deny",
+          "iwr *": "deny",
+          "irm *": "deny",
+          "Start-BitsTransfer*": "deny",
+          "git clone *": "deny"
+        },
+        "websearch": "deny",
+        "websearch_cited": "deny",
+        "webfetch": "deny",
+        "context7_*": "deny",
+        "exa_*": "deny",
+        "gh_grep_*": "deny",
+        "duckduckgo_*": "deny",
+        "semble_*": "deny",
+        "composio_*": "deny",
+        "ebay_*": "deny",
+        "home_assistant_*": "deny",
+        "tinyfish_search": "deny",
+        "retrieval_control": "deny",
+        "task": {
+          "*": "deny"
+        }
       }
-    }
-  },
+    },
 
-  "review": {
-    "description": "Strict read-only reviewer focused on correctness, regressions, and scope control. Do NOT call Composio tools directly; only build/plan may route to the composio agent.",
-    "model": "openrouter/deepseek-v4.1-flash-1017",
-    "reasoningEffort": "medium",
-    "options": { "reasoningSummary": "auto" },
-    "temperature": 0.1,
-    "mode": "subagent",
-    "permission": {
-      "read": "allow",
-      "glob": "allow",
-      "grep": "allow",
-      "write": "deny",
-      "edit": "deny",
-      "composio_*": "deny",
-      "ebay_*": "deny",
-      "bash": {
-        "git status*": "allow",
-        "git diff*": "allow",
-        "git log*": "allow",
-        "*": "deny"
-      },
-      "task": {
-        "*": "deny"
+    "review": {
+      "description": "Read-only review worker. Correctness, regressions, scope, and verification. No external web/MCP, no children.",
+      "model": "openrouter/deepseek-v4.1-flash-1017",
+      "options": { "reasoningEffort": "low", "reasoningSummary": "auto" },
+      "temperature": 0.1,
+      "mode": "subagent",
+      "permission": {
+        "read": {
+          "*": "allow",
+          "*.env": "ask",
+          "*.env.*": "ask",
+          "*.env.example": "allow"
+        },
+        "glob": "allow",
+        "grep": "allow",
+        "skill": "allow",
+        "sqz_sqz_read_file": "allow",
+        "sqz_sqz_list_dir": "allow",
+        "sqz_sqz_grep": "allow",
+        "sqz_expand": "allow",
+        "write": "deny",
+        "edit": "deny",
+        "patch": "deny",
+        "websearch": "deny",
+        "websearch_cited": "deny",
+        "webfetch": "deny",
+        "context7_*": "deny",
+        "exa_*": "deny",
+        "gh_grep_*": "deny",
+        "duckduckgo_*": "deny",
+        "semble_*": "deny",
+        "composio_*": "deny",
+        "ebay_*": "deny",
+        "home_assistant_*": "deny",
+        "tinyfish_search": "deny",
+        "retrieval_control": "deny",
+        "bash": {
+          "*": "deny",
+          "git status*": "allow",
+          "git diff*": "allow",
+          "git log*": "allow"
+        },
+        "task": {
+          "*": "deny"
+        }
       }
-    }
-  },
+    },
 
-  "research": {
-    "description": "Deep research agent. Decomposes questions, delegates retrieval to fetcher, and synthesizes sourced conclusions. Do NOT call Composio tools directly; only build/plan may route to the composio agent.",
-    "model": "openrouter/deepseek-v4.1-flash-1017",
-    "reasoningEffort": "medium",
-    "options": { "reasoningSummary": "detailed" },
-    "temperature": 0.35,
-    "mode": "subagent",
-    "permission": {
-      "read": "allow",
-      "glob": "allow",
-      "grep": "allow",
-      "write": "deny",
-      "edit": "allow",
-      "websearch": "deny",
-      "webfetch": "deny",
-      "composio_*": "deny",
-      "ebay_*": "deny",
-      "bash": "deny",
-      "task": {
-        "*": "deny",
-        "fetch": "allow"
+    "explore": {
+      "description": "Local reconnaissance worker. Read-only local files and Semble local semantic search. Remote git repo URLs are not allowed. No web, no children.",
+      "model": "openrouter/deepseek-v4.1-flash",
+      "options": { "reasoningEffort": "low", "reasoningSummary": "auto" },
+      "hidden": true,
+      "temperature": 0.2,
+      "mode": "subagent",
+      "permission": {
+        "read": {
+          "*": "allow",
+          "*.env": "ask",
+          "*.env.*": "ask",
+          "*.env.example": "allow"
+        },
+        "glob": "allow",
+        "grep": "allow",
+        "sqz_sqz_read_file": "allow",
+        "sqz_sqz_list_dir": "allow",
+        "sqz_sqz_grep": "allow",
+        "sqz_expand": "allow",
+        "write": "deny",
+        "edit": "deny",
+        "patch": "deny",
+        "websearch": "deny",
+        "websearch_cited": "deny",
+        "webfetch": "deny",
+        "context7_*": "deny",
+        "exa_*": "deny",
+        "gh_grep_*": "deny",
+        "duckduckgo_*": "deny",
+        "composio_*": "deny",
+        "ebay_*": "deny",
+        "home_assistant_*": "deny",
+        "tinyfish_search": "deny",
+        "retrieval_control": "deny",
+        // Local semantic search only; the policy plugin rejects remote git repo URLs.
+        "semble_*": "allow",
+        "bash": {
+          "*": "deny",
+          "ls *": "allow",
+          "tree *": "allow",
+          "cat *": "allow",
+          "grep *": "allow",
+          "rg *": "allow"
+        },
+        "task": {
+          "*": "deny"
+        }
       }
-    }
-  },
+    },
 
-  "fetch": {
-    "description": "Web retrieval worker. Executes searches and fetches, extracts relevant findings, and returns structured results without synthesis. Do NOT call Composio tools directly; only build/plan may route to the composio agent.",
-    "model": "openrouter/deepseek-v4.1-flash",
-    "reasoningEffort": "low",
-    "options": { "reasoningSummary": "auto" },
-    "temperature": 0.1,
-    "mode": "subagent",
-    "hidden": true,
-    "permission": {
-      "websearch": "allow",
-      "webfetch": "allow",
-      "ebay_*": "allow",
-      "read": "deny",
-      "glob": "deny",
-      "grep": "deny",
-      "write": "deny",
-      "edit": "deny",
-      "composio_*": "deny",
-      "bash": "deny",
-      "task": {
-        "*": "deny"
+    "fetch": {
+      "description": "Sole external retrieval worker. Budgeted web search/fetch via DuckDuckGo, TinyFish, Exa, Context7, and gh_grep. No synthesis, no children.",
+      "model": "openrouter/deepseek-v4.1-flash",
+      "options": { "reasoningEffort": "low", "reasoningSummary": "auto" },
+      "temperature": 0.1,
+      "mode": "subagent",
+      "hidden": true,
+      "steps": 10,
+      "permission": {
+        "websearch": "allow",
+        "websearch_cited": "allow",
+        "webfetch": "allow",
+        "context7_*": "allow",
+        "exa_*": "allow",
+        "gh_grep_*": "allow",
+        "duckduckgo_*": "allow",
+        // Custom policy-plugin tools: search-only TinyFish and status-only retrieval_control.
+        "tinyfish_search": "allow",
+        "retrieval_control": "allow",
+        "read": "deny",
+        "glob": "deny",
+        "grep": "deny",
+        "skill": "deny",
+        "question": "deny",
+        "todowrite": "deny",
+        "lsp": "deny",
+        "sqz_sqz_read_file": "deny",
+        "sqz_sqz_list_dir": "deny",
+        "sqz_sqz_grep": "deny",
+        "sqz_expand": "deny",
+        "write": "deny",
+        "edit": "deny",
+        "patch": "deny",
+        "bash": "deny",
+        "semble_*": "deny",
+        "composio_*": "deny",
+        "ebay_*": "deny",
+        "home_assistant_*": "deny",
+        "task": {
+          "*": "deny"
+        }
       }
-    }
-  },
+    },
 
-  "explore": {
-    "description": "Read-only codebase scout for reconnaissance and file discovery. Do NOT call Composio tools directly; only build/plan may route to the composio agent.",
-    "model": "openrouter/deepseek-v4.1-flash",
-    "reasoningEffort": "low",
-    "options": { "reasoningSummary": "auto" },
-    "hidden": true,
-    "temperature": 0.2,
-    "mode": "subagent",
-    "permission": {
-      "read": "allow",
-      "glob": "allow",
-      "grep": "allow",
-      "write": "deny",
-      "edit": "deny",
-      "composio_*": "deny",
-      "ebay_*": "deny",
-      "bash": {
-        "ls *": "allow",
-        "tree *": "allow",
-        "cat *": "allow",
-        "grep *": "allow",
-        "rg *": "allow",
-        "*": "deny"
-      },
-      "task": {
-        "*": "deny"
+    "track": {
+      "description": "Beads tracker worker. Scoped br/bv only; no code edits, web, or children.",
+      "model": "openrouter/deepseek-v4.1-flash",
+      "options": { "reasoningEffort": "low", "reasoningSummary": "auto" },
+      "temperature": 0.1,
+      "mode": "subagent",
+      "permission": {
+        "read": {
+          "*": "allow",
+          "*.env": "ask",
+          "*.env.*": "ask",
+          "*.env.example": "allow"
+        },
+        "glob": "allow",
+        "grep": "allow",
+        "skill": "allow",
+        "sqz_sqz_read_file": "deny",
+        "sqz_sqz_list_dir": "deny",
+        "sqz_sqz_grep": "deny",
+        "sqz_expand": "deny",
+        "question": "deny",
+        "todowrite": "deny",
+        "lsp": "deny",
+        "write": "deny",
+        "edit": "deny",
+        "patch": "deny",
+        "websearch": "deny",
+        "websearch_cited": "deny",
+        "webfetch": "deny",
+        "context7_*": "deny",
+        "exa_*": "deny",
+        "gh_grep_*": "deny",
+        "duckduckgo_*": "deny",
+        "semble_*": "deny",
+        "composio_*": "deny",
+        "ebay_*": "deny",
+        "home_assistant_*": "deny",
+        "tinyfish_search": "deny",
+        "retrieval_control": "deny",
+        "bash": {
+          "*": "deny",
+          "br *": "allow",
+          // Destructive tracker operations keep the approval convention.
+          "br delete*": "ask",
+          "br close*": "ask",
+          // bv is robot-only; never interactive and never --no-db.
+          "bv --robot-*": "allow",
+          "bv *--no-db*": "deny"
+        },
+        "task": {
+          "*": "deny"
+        }
       }
-    }
-  },
+    },
 
-  "composio": {
-    "description": "Dedicated Composio workflow agent. Owns discovery, selected schema retrieval, auth/connection checks, execution, verification, and final reporting internally. Reuses a supplied COMPOSIO_CONTEXT_V1 when available; performs one end-to-end workflow per invocation and returns a compact verified summary plus updated context. Does not expose full tool catalogs/schemas unless explicitly requested for debugging. Never delegates further. Always passes model hint \"deepseek/deepseek-v4.1-flash-1017\" to COMPOSIO_SEARCH_TOOLS for optimal planning.",
-    "model": "openrouter/deepseek-v4.1-flash-1017",
-    "reasoningEffort": "medium",
-    "options": { "reasoningSummary": "auto" },
-    "temperature": 0.35,
-    "mode": "subagent",
-    "permission": {
-      "read": "allow",
-      "glob": "allow",
-      "grep": "allow",
-      "composio_*": "allow",
-      "ebay_*": "deny",
-      "write": "deny",
-      "edit": "deny",
-      "bash": "deny",
-      "task": {
-        "*": "deny"
+    "composio": {
+      "description": "Dedicated Composio worker. Owns one entire external-app workflow end-to-end. No children, no web, no local mutations.",
+      "model": "openrouter/deepseek-v4.1-flash-1017",
+      "options": { "reasoningEffort": "low", "reasoningSummary": "auto" },
+      "temperature": 0.35,
+      "mode": "subagent",
+      "permission": {
+        "read": {
+          "*": "allow",
+          "*.env": "ask",
+          "*.env.*": "ask",
+          "*.env.example": "allow"
+        },
+        "glob": "allow",
+        "grep": "allow",
+        "skill": "allow",
+        "composio_*": "allow",
+        "sqz_sqz_read_file": "deny",
+        "sqz_sqz_list_dir": "deny",
+        "sqz_sqz_grep": "deny",
+        "sqz_expand": "deny",
+        "question": "deny",
+        "todowrite": "deny",
+        "lsp": "deny",
+        "write": "deny",
+        "edit": "deny",
+        "patch": "deny",
+        "bash": "deny",
+        "websearch": "deny",
+        "websearch_cited": "deny",
+        "webfetch": "deny",
+        "context7_*": "deny",
+        "exa_*": "deny",
+        "gh_grep_*": "deny",
+        "duckduckgo_*": "deny",
+        "semble_*": "deny",
+        "ebay_*": "deny",
+        "home_assistant_*": "deny",
+        "tinyfish_search": "deny",
+        "retrieval_control": "deny",
+        "task": {
+          "*": "deny"
+        }
       }
     }
   }
-}
 }
