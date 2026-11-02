@@ -33,6 +33,43 @@ verification of this checkpoint.
   overrides, or pending Semble/SQZ portability work even though those code
   changes are implemented.
 
+## 2.0 preparation quarantine
+
+Prepared from checkpoint `23663dbd4988bc40e27d56a353af38292600e1ca`. The runtime is
+still 1.19.5; the upgrade has not been run.
+
+- `opencode.jsonc` now has `"plugin": []`.
+- The tracked `plugins/` directory was moved to `plugins.1x-disabled/` without
+  editing either file. It is a temporary source archive only and must not be
+  registered as a plugin path.
+- Disabled local plugins: `plugins/retrieval-policy.ts`, `plugins/sqz.ts`.
+- Original configured package specifiers:
+  - `@tarquinen/opencode-dcp@3.1.9`
+  - `@franlol/opencode-md-table-formatter@0.0.3`
+  - `cc-safety-net@0.8.2`
+  - `@tarquinen/opencode-smart-title@0.1.7`
+  - `@bastiangx/opencode-unmoji@0.3.12`
+  - `opencode-ntfy.sh@1.1.0`
+
+This is a transitional, plugin-free configuration. It has **not** been validated
+on OpenCode 2.0.
+
+### Restoration if the upgrade is cancelled
+
+1. Restore the config:
+   `git checkout 23663dbd4988bc40e27d56a353af38292600e1ca -- opencode.jsonc`
+   (or manually restore the exact specifiers above).
+2. Restore discovery: `git mv plugins.1x-disabled plugins`.
+3. Re-run the 1.x checks. If the preparation commit is HEAD, a single
+   `git revert <preparation-commit>` is the cleanest reversible step.
+
+### Transitional test/import failures
+
+Tests, scripts, or imports that reference `plugins/` may fail while the directory
+is quarantined. Do not rewrite them to load the incompatible 1.x plugins. Leave
+them failing until migration or restoration; this is expected in the transitional
+state.
+
 ## Unfinished checks after the upgrade
 
 - Verify the actual runtime version and configuration migration.

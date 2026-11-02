@@ -66,14 +66,10 @@
       }
     }
   },
-  "plugin": [
-    "@tarquinen/opencode-dcp@3.1.9",
-    "@franlol/opencode-md-table-formatter@0.0.3",
-    "cc-safety-net@0.8.2",
-    "@tarquinen/opencode-smart-title@0.1.7",
-    "@bastiangx/opencode-unmoji@0.3.12",
-    "opencode-ntfy.sh@1.1.0"
-  ],
+  // Temporarily empty for the OpenCode 2.0 upgrade preparation. 1.x plugins are
+  // incompatible with 2.0; original pinned specifiers are recorded in
+  // docs/upgrade-handoff.md.
+  "plugin": [],
   "mcp": {
     "context7": { "type": "remote", "url": "https://mcp.context7.com/mcp", "enabled": true },
     // Base stays disabled. The policy plugin may enable this only when EXA_API_KEY is present.
