@@ -1,10 +1,18 @@
-# private overlays
-opencode.private.json
-opencode.private.local.json
+node_modules
+package.json
+bun.lock
+antigravity-accounts.json
+antigravity-accounts.json.*.tmp
+antigravity-signature-cache.json
+antigravity-logs/
 
-# common junk
-.DS_Store
-Thumbs.db
-*.swp
-*.tmp
-node_modules/
+# private/runtime overlays and secrets
+notification-ntfy.json
+opencode.private.local.json
+auth.json
+.env
+.env.*
+*.bak
+*.log
+logs/
+memory/

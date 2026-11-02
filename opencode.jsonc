@@ -104,6 +104,22 @@
       ],
       "enabled": true
     },
+    "ebay": {
+      "type": "local",
+      "command": [
+        "uv",
+        "--directory",
+        "C:/Users/hermes/mcp-servers/ebay",
+        "run",
+        "ebay-mcp"
+      ],
+      "environment": {
+        "EBAY_CLIENT_ID": "{env:EBAY_CLIENT_ID}",
+        "EBAY_CLIENT_SECRET": "{env:EBAY_CLIENT_SECRET}",
+        "EBAY_ENV": "{env:EBAY_ENV}"
+      },
+      "enabled": true
+    },
     "home_assistant": {
       "type": "remote",
       "url": "https://homeassistant.gerosalorenzo.com/api/mcp",
@@ -124,7 +140,9 @@
     "task": "deny",
     "websearch": "allow",
     "websearch_cited": "allow",
-    "sqz": "allow"
+    "sqz": "allow",
+    // Hard boundary: denied by default; only the fetch agent explicitly allows it.
+    "ebay_*": "deny"
   },
   "default_agent": "build",
   "subagent_depth": 2,
@@ -152,6 +170,7 @@
       "exa_*": "deny",
       "gh_grep_*": "deny",
       "composio_*": "deny",
+      "ebay_*": "deny",
       "bash": "deny",
 
       "task": {
@@ -187,6 +206,7 @@
       "exa_*": "deny",
       "gh_grep_*": "deny",
       "composio_*": "deny",
+      "ebay_*": "deny",
       "bash": "deny",
 
       "task": {
@@ -213,6 +233,7 @@
       "write": "allow",
       "edit": "allow",
       "composio_*": "deny",
+      "ebay_*": "deny",
       "bash": "allow",
 
       "task": {
@@ -235,6 +256,7 @@
       "write": "deny",
       "edit": "deny",
       "composio_*": "deny",
+      "ebay_*": "deny",
       "bash": {
         "git status*": "allow",
         "git diff*": "allow",
@@ -263,6 +285,7 @@
       "websearch": "deny",
       "webfetch": "deny",
       "composio_*": "deny",
+      "ebay_*": "deny",
       "bash": "deny",
       "task": {
         "*": "deny",
@@ -282,6 +305,7 @@
     "permission": {
       "websearch": "allow",
       "webfetch": "allow",
+      "ebay_*": "allow",
       "read": "deny",
       "glob": "deny",
       "grep": "deny",
@@ -310,6 +334,7 @@
       "write": "deny",
       "edit": "deny",
       "composio_*": "deny",
+      "ebay_*": "deny",
       "bash": {
         "ls *": "allow",
         "tree *": "allow",
@@ -336,6 +361,7 @@
       "glob": "allow",
       "grep": "allow",
       "composio_*": "allow",
+      "ebay_*": "deny",
       "write": "deny",
       "edit": "deny",
       "bash": "deny",

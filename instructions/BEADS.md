@@ -4,19 +4,16 @@ If no .beads folder present, ask user if it wants issue tracking for this sessio
 
 ## br (beads_rust) — Issue Management
 
-### Platform split
+###  CRITICAL: Windows `--no-db` Mode
 
-- Windows: use `br` with `--no-db --no-auto-flush` unless a repo-local wrapper already adds them.
-- Linux/macOS: use plain `br` unless repo-local docs override that behavior.
+The bundled SQLite pager does not work on Windows. **Every `br` command MUST include `--no-db`.**
 
-The bundled SQLite pager does not work on Windows. `--no-auto-flush` suppresses the harmless CONFIG_ERROR about stale DB export in that mode.
+Additionally, add `--no-auto-flush` to suppress harmless CONFIG_ERROR about stale DB export.
 
-**Windows suffix for br commands:**
+**Standard suffix for ALL br commands on this system:**
 ```bash
 --no-db --no-auto-flush
 ```
-
-Examples below show the Windows form where a suffix is present; adapt them for Linux/macOS if your repo uses plain `br` there.
 
 ### Creating Beads
 
@@ -232,9 +229,9 @@ bv --recipe high-impact --robot-triage       # Pre-filter: top PageRank scores
 ### Workflow Pattern
 
 1. **Triage**: Run `bv --robot-triage` to find highest-impact actionable work
-2. **Claim**: Windows `br update --no-db --no-auto-flush <id> --status=in_progress`; Linux/macOS `br update <id> --status=in_progress` unless repo-local docs say otherwise
+2. **Claim**: `br update --no-db --no-auto-flush <id> --status=in_progress`
 3. **Work**: Implement the task
-4. **Complete**: Windows `br close --no-db --no-auto-flush <id> --reason="Completed: <summary>"`; Linux/macOS `br close <id> --reason="Completed: <summary>"` unless repo-local docs say otherwise
+4. **Complete**: `br close --no-db --no-auto-flush <id> --reason="Completed: <summary>"`
 5. **Commit**: Stage code + `.beads/issues.jsonl` together
 
 ### Session Protocol

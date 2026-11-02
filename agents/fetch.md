@@ -85,6 +85,22 @@ Repeat for each fetched URL.
 - <target>: <reason>
 - fallback attempted: <what was tried>
 
+## eBay listing tools (ebay_*)
+
+Use the `ebay_*` MCP tools for eBay listing and price requests. They are read-only, cover the eBay.it marketplace only, and return one page per call (`get_item` returns a single listing).
+
+- Results are **current asking prices from active listings**, never sold or completed prices. Do not infer or state a completed sale price, "market value", or "typical selling price" from them.
+- The `buyingOptions:{FIXED_PRICE}` filter is **always applied** and cannot be turned off: it excludes auction-only listings, but a listing that offers Buy It Now *and* an auction can still match. Do not describe results as "auctions excluded".
+- `EBAY_IT` and `USED` are defaults. `search_listings` sorts by price ascending by default and also accepts `bestMatch` (no sort parameter sent); `price_summary` always sends no sort parameter and uses eBay's default Best Match ordering. Report the filters actually applied (marketplace, condition, item country, category, sort).
+- eBay's price sort can account for shipping and other factors, so it is not the same as item-price-only ordering. Do not treat a price-sorted page as an item-price ranking.
+- `price` is the item price only. It excludes shipping, and shipping may be free, fixed, calculated at checkout, or missing. Read `shippingOptions`/`shippingOptionsRaw` for per-listing shipping and carry the `notes.shipping` caveat. Never describe prices as shipping-inclusive.
+- Always report currency and sample size (`sampleCount`, `returned`, `totalAvailable`). If `singleCurrency` is false, report each `currencyGroups` entry separately and never merge currencies.
+- `price_summary` is a sample only, never a full-market or population statistic. If `truncated` is true (`totalAvailable > itemsUsed`, i.e. eBay reports more matches than the rows this page returned), say so explicitly and state that statistics cover only the returned sample. `skippedMissingPrice` counts returned rows without a usable price and does not itself mean the page was truncated. Carry `notes.sample`/`sampleNote`.
+- Quote `min`/`p25`/`median`/`p75`/`max` as observed asking-price statistics tied to a sample size, not as a valuation.
+- Never paginate automatically. `has_more: true` only means further rows exist; report it and request an explicit `offset` if more is needed.
+- On tool errors (400/401/403/429), report the sanitized message. For 429, report the stated `Retry-After` delay instead of retrying.
+- Never print, echo, or request credentials or tokens. If a tool reports missing `EBAY_CLIENT_ID`/`EBAY_CLIENT_SECRET`, report that the parent must set the environment.
+
 ## What You Must Not Do
 
 - Do not synthesize across sources.

@@ -1,6 +1,6 @@
 ---
 name: beads-br
-description: Use Beads Rust commands for creating, updating, and closing Beads issues across Windows and Unix-like shells.
+description: Use Beads Rust commands for creating, updating, and closing Beads issues on this Windows setup.
 compatibility: opencode
 ---
 # Beads BR Workflow
@@ -9,7 +9,7 @@ Use this skill when interacting with `br`, the Beads issue-management tool.
 
 ## Purpose
 
-This skill defines the safe operating rules for `br` across platforms.
+This skill defines the safe operating rules for `br` on this Windows system.
 
 `br` is the lifecycle and mutation tool for Beads:
 - create issues
@@ -20,27 +20,23 @@ This skill defines the safe operating rules for `br` across platforms.
 
 Use `bv` instead for graph-aware triage, prioritization, and recommendations.
 
-## Environment split
+## Critical Windows rule
 
-- Windows: every `br` command must include:
-
-```bash
---no-db --no-auto-flush
-```
-
-This is mandatory on Windows.
-
-- Linux/macOS: use plain `br` commands unless the current repo documents a different wrapper or flag requirement.
-
-## Windows suffix
-
-Use this suffix on Windows:
+On this system, every `br` command must include:
 
 ```bash
 --no-db --no-auto-flush
 ```
 
-Examples below use the Windows form; on Linux/macOS, omit the suffix unless repo-local docs say otherwise.
+This is mandatory.
+
+## Canonical suffix
+
+Use this suffix for all `br` commands:
+
+```bash
+--no-db --no-auto-flush
+```
 
 ## When to use
 
@@ -185,7 +181,7 @@ Cause: missing `--no-db`.
 Fix: add `--no-db`.
 
 ### DATABASE_ERROR about malformed database image
-Cause: broken `.db`, irrelevant in `--no-db` mode.
+Cause: broken `.db`, irrelevant in no-db mode.
 Fix: do not try to repair the DB; continue using `--no-db`.
 
 ## Source of truth and commit discipline
@@ -196,8 +192,7 @@ If a task changes both code and Beads state, commit the related `.beads/` change
 
 ## Rules
 
-- On Windows, always include `--no-db --no-auto-flush`.
-- On Linux/macOS, use the repo's documented wrapper or plain `br` as appropriate.
+- Always include `--no-db --no-auto-flush`.
 - Do not use DB-backed sync workflows.
 - Use `br` for issue mutation and lifecycle operations.
 - Keep Beads changes aligned with the code changes they represent.
