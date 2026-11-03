@@ -46,6 +46,7 @@ async function harness(options: {
     ({
       root: { id: "root", agent: "build" },
       child: { id: "child", parentID: "root", agent: "fetch" },
+      explore: { id: "explore", parentID: "root", agent: "explore" },
       grandchild: { id: "grandchild", parentID: "child", agent: "fetch" },
       other: { id: "other", parentID: "elsewhere", agent: "fetch" },
     } satisfies Record<string, SessionInfo>);
@@ -1108,6 +1109,141 @@ describe("retrieval-policy 2.x staging plugin", () => {
       { sessionID: "child", agent: "fetch" },
     );
     expect(workerReset.reason).toBe("reset_not_authorized");
+  });
+
+  test("explore discovery budget stops repeated scans and is parent-extendable", async () => {
+    const h = await harness();
+
+    // A single Code Mode outer call is not itself a discovery call.
+    await callBefore(
+      h.hooks,
+      event("execute", "explore", "outer-explore", { code: "return 1" }, "explore"),
+    );
+    for (let i = 1; i <= 8; i += 1) {
+      await callBefore(
+        h.hooks,
+        event("grep", "explore", `search-${i}`, { pattern: `p${i}` }, "explore"),
+      );
+    }
+    // Reading a known file is evidence collection, not a new search root.
+    await callBefore(
+      h.hooks,
+      event("read", "explore", "read-1", { path: "README.md" }, "explore"),
+    );
+    const denied = await expectToolDenial(() =>
+      callBefore(
+        h.hooks,
+        event("glob", "explore", "search-9", { pattern: "**/*" }, "explore"),
+      ),
+    );
+    expect(denied.message).toContain("discovery_budget_exhausted");
+
+    const status = await control(
+      h.tools,
+      { action: "status", session_id: "explore" },
+      { sessionID: "root", agent: "build" },
+    );
+    expect(status.ok).toBe(true);
+    expect(status.report.discovery).toMatchObject({
+      limit: 8,
+      used: 8,
+      remaining: 0,
+      blocked: 1,
+      extended: false,
+      note: "local_search_list_calls_not_time",
+    });
+
+    const workerExtend = await control(
+      h.tools,
+      { action: "extend_explore", session_id: "explore" },
+      { sessionID: "child", agent: "fetch" },
+    );
+    expect(workerExtend.ok).toBe(false);
+    expect(workerExtend.reason).toBe("extend_not_authorized");
+
+    const forgedExtend = await control(
+      h.tools,
+      { action: "extend_explore", session_id: "other" },
+      { sessionID: "root", agent: "build" },
+    );
+    expect(forgedExtend.reason).toBe("target_not_child");
+
+    const wrongWorkerExtend = await control(
+      h.tools,
+      { action: "extend_explore", session_id: "child" },
+      { sessionID: "root", agent: "build" },
+    );
+    expect(wrongWorkerExtend.reason).toBe("target_not_explore");
+
+    const extended = await control(
+      h.tools,
+      { action: "extend_explore", session_id: "explore", extra_calls: 4 },
+      { sessionID: "root", agent: "build" },
+    );
+    expect(extended.ok).toBe(true);
+    expect(extended.report.discovery.limit).toBe(12);
+
+    for (let i = 9; i <= 12; i += 1) {
+      await callBefore(
+        h.hooks,
+        event("grep", "explore", `search-${i}`, { pattern: `p${i}` }, "explore"),
+      );
+    }
+    const deniedAgain = await expectToolDenial(() =>
+      callBefore(
+        h.hooks,
+        event("grep", "explore", "search-13", { pattern: "p13" }, "explore"),
+      ),
+    );
+    expect(deniedAgain.message).toContain("discovery_budget_exhausted");
+
+    const secondExtend = await control(
+      h.tools,
+      { action: "extend_explore", session_id: "explore" },
+      { sessionID: "root", agent: "build" },
+    );
+    expect(secondExtend.reason).toBe("already_extended");
+  });
+
+  test("namespaced local tools charge explore but never other agents", async () => {
+    const h = await harness();
+
+    // Fetch may run many non-retrieval local tool calls in this harness; they
+    // are not a discovery assignment and must not create a counter.
+    for (let i = 1; i <= 9; i += 1) {
+      await callBefore(
+        h.hooks,
+        event(
+          "mcp__sqz__sqz_grep",
+          "child",
+          `fetch-local-${i}`,
+          { pattern: `p${i}` },
+          "fetch",
+        ),
+      );
+    }
+    const fetchStatus = await control(
+      h.tools,
+      { action: "status" },
+      { sessionID: "child", agent: "fetch" },
+    );
+    expect(fetchStatus.ok).toBe(true);
+    expect(fetchStatus.report.discovery).toBeUndefined();
+
+    await callBefore(
+      h.hooks,
+      event("mcp__semble__search", "explore", "semble-1", { query: "microphone" }, "explore"),
+    );
+    const exploreStatus = await control(
+      h.tools,
+      { action: "status", session_id: "explore" },
+      { sessionID: "root", agent: "build" },
+    );
+    expect(exploreStatus.report.discovery).toMatchObject({
+      limit: 8,
+      used: 1,
+      remaining: 7,
+    });
   });
 
   test("restricts native websearch before execution and preserves Exa MCP", async () => {

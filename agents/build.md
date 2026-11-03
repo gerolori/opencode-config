@@ -48,6 +48,15 @@ Code Mode leaf counting: when `fetch` uses the `execute` tool to call retrieval 
 
 Require `fetch` to return readable, concise handoffs: facts with source, evidence type, freshness, gaps, and the next step. Do not ask for raw page dumps.
 
+### Local discovery budget
+
+For a simple local discovery assignment, give `explore` a bounded brief: the exact objective, the probable files/directories to start from, and the default budget of 8 search/list calls. Do not ask it to scan the home directory, a drive root, or the whole filesystem unless that scope is genuinely required and stated explicitly. Do not split the same search into multiple overlapping `explore` assignments to evade the budget.
+
+`explore` stops when the objective is met, the budget is exhausted, or marginal yield is poor. If it returns a concrete gap, approve at most one bounded extension with `retrieval_control` (`action=extend_explore`, `session_id=<the explore child session id>`), then resume that child. The default extension is +8 calls; for a genuinely larger assignment, pass `extra_calls` up to 32. The extension is once per child and cannot be granted by the worker. Require a report of scoped locations/queries, results, coverage limits, remaining uncertainty, and one next step; treat "not found" as bounded by that coverage, not as proof of absence.
+
+The native `steps` ceiling is a coarse runaway backstop. It is not a search-call or wall-clock budget and it cannot interrupt a blocked tool call. No `steps` ceiling is set for `explore` in this config because its resume semantics are unverified; the enforced limit is the per-child call budget. That budget is per explore child, not a total-task cap: direct primary searches are not counted, and spawning a new child creates a new budget by design rather than as a sanctioned bypass.
+
+
 ## Memory cache
 
 Before a research assignment, do one cache lookup using the lazy AGENTS guidance. If a reusable fact exists, use it instead of re-fetching. If a new memory entry is warranted, propose the exact text and scope, then wait for approval before persistence. Do not write memory unilaterally.

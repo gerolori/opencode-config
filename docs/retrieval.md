@@ -14,8 +14,9 @@ detector.
 
 ```text
 retrieval_control({
-  action: "status" | "extend" | "reset_provider",
+  action: "status" | "extend" | "extend_explore" | "reset_provider",
   session_id?: string,
+  extra_calls?: number,
   provider?: "duckduckgo" | "tinyfish" | "exa" | "gh_grep" | "context7" |
              "builtin_webfetch" | "semble" | "ebay"
 })
@@ -29,11 +30,31 @@ retrieval_control({
   `availability_note=policy_eligibility_not_live_connector_health`.
 - `extend` — root `build` / `plan` only, direct child only, once. Grants +3 searches
   and +3 reads. Self-targets, non-children, unknown sessions, and repeats are refused.
+- `extend_explore` — `build` / `plan` only, direct explore child only, once. Grants
+  +8 local search/list calls by default, or `extra_calls` from 1 to 32. It is separate
+  from the fetch search/read extension and does not reset counters.
 - `reset_provider` — root `build` / `plan` only. Requires one of the named providers.
   Clears cooldown, operator-required state, last error category, and consecutive
   failures. It preserves TinyFish rate counters, provider totals, resource blocks, and
   every session budget. A `fetch` child cannot reset or self-extend.
 - The result marks attempt counts as local, not vendor billing.
+
+## Local exploration budget
+
+The `explore` worker is charged one unit per leaf `execute.before` event for
+`glob`, `grep`, SQZ list/grep, local Semble search, and search/list shell
+invocations. The default is 8 calls per child session; known-file reads do not
+consume it. A Code Mode `execute` outer call is not a search, but each leaf call
+inside it is. The parent may grant one extension as above. This is a call budget,
+not a wall-clock timer, and it cannot interrupt inference or a blocking/stalled
+tool. Real 2.2.5 Code Mode leaf-hook emission remains unverified until a live
+smoke; the offline tests simulate the hook events.
+The budget is **per explore child assignment**, not a total-task budget: direct
+primary searches and newly spawned children are prompt-governed, not counted.
+`explore` has no `steps` ceiling in this config because local 2.2.5 step
+semantics on subagent resume are unverified; `fetch` keeps `steps: 10`.
+The discovery counter lives in the plugin process; reload/restart resets it.
+
 
 ## Native catalog and TinyFish
 

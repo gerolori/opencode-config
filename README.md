@@ -136,8 +136,9 @@ dependencies to reconstruct a removed command.
 
 ```text
 retrieval_control({
-  action: "status" | "extend" | "reset_provider",
+  action: "status" | "extend" | "extend_explore" | "reset_provider",
   session_id?: string,
+  extra_calls?: number,
   provider?: "duckduckgo" | "tinyfish" | "exa" | "gh_grep" | "context7" |
              "builtin_webfetch" | "semble"
 })
@@ -146,6 +147,13 @@ retrieval_control({
 - `status` — caller's own session by default. A `build` / `plan` parent may target a
   direct child. `fetch` may call only `status`.
 - `extend` — `build` / `plan` only, direct child only, once, +3 searches and +3 reads.
+- `extend_explore` — `build` / `plan` only, direct child only, once, +8 local
+  search/list calls by default; `extra_calls` may request up to 32. This is separate
+  from the fetch search/read extension and does not reset counters. The enforced
+  budget is per explore child, not a total-task budget; direct primary searches and
+  newly spawned children are not counted. Counters are in-memory and reset on plugin
+  reload/service restart. There is no time limit and no claim to stop a stalled tool.
+  Code Mode leaf-hook behavior remains unverified until a live smoke.
 - `reset_provider` — root `build` / `plan` only. Clears a named provider's cooldown,
   operator-required flag, last error category, and consecutive failures. It preserves
   TinyFish rate counters, provider totals, resource blocks, and every session budget.

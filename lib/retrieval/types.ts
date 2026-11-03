@@ -73,8 +73,10 @@ export type PolicyReason =
   | "provider_not_found"
   | "forged_session_target"
   | "target_not_child"
+  | "target_not_explore"
   | "extend_not_authorized"
   | "already_extended"
+  | "invalid_extension"
   | "session_not_found";
 
 export type PolicyDecision = {

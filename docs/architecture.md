@@ -100,6 +100,33 @@ allows. The last matching rule wins.
 - `composio` may use `composio_*` only.
 - Unknown MCP namespaces are denied for all agents by default.
 
+## Local discovery budget
+
+`explore` is the bounded local worker. An assignment starts with **8 local
+search/list calls** (`glob`, `grep`, SQZ list/grep, local Semble search, and
+search/list shell invocations). Reading a known file does not consume the budget.
+The plugin charges one unit per leaf `execute.before` event, including leaves
+inside one Code Mode `execute` script; the outer `execute` call is not a search.
+
+- `explore` stops when the objective is met, the budget is exhausted, or further
+  calls have poor marginal yield.
+- The parent may grant exactly one extension with `retrieval_control`
+  (`action=extend_explore`, target a direct child). The default is +8 calls;
+  `extra_calls` may request up to 32 for a genuinely larger assignment.
+- The worker cannot extend itself; `retrieval_control` remains build/plan-only.
+- The budget is **per explore child assignment**, not a total-task budget. Direct
+  searches by the primary and newly spawned children are prompt-governed, not
+  counted by this counter.
+- This is a call budget, not a time budget. It does not interrupt inference or a
+  blocking/stalled tool call, and there is no hard wall-clock promise.
+- Real 2.2.5 Code Mode leaf-hook emission remains unverified until a live smoke;
+  the offline tests simulate those hook events.
+- `explore` has no per-task `steps` ceiling in this config. Local 2.2.5 step
+  semantics on subagent resume are not verified; a low ceiling could make a
+  parent-approved extension unusable. `fetch` keeps its existing `steps: 10`.
+- Budget state is in memory for the plugin process. A plugin reload or service
+  restart resets it. Normal session resume keeps the same session ID and budget.
+
 ## Compaction
 
 Native compaction remains enabled. DCP 3.2.0 keeps the existing `dcp.jsonc` shape:

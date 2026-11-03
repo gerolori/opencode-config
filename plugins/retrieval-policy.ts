@@ -1,11 +1,13 @@
 import { Plugin } from "@opencode/plugin";
 import { Tool } from "@opencode/schema/tool";
+import { DiscoveryBudget } from "../lib/discovery";
 import { registerHostConfig } from "../lib/host-config";
 import {
   categorizeError,
   InvocationIdentity,
   RetrievalEngine,
   type ControlCaller,
+  type ControlResult,
   type PolicyDecision,
   type SessionInfo,
 } from "../lib/retrieval";
@@ -19,9 +21,10 @@ const controlInput = {
   properties: {
     action: {
       type: "string",
-      enum: ["status", "extend", "reset_provider"],
+      enum: ["status", "extend", "extend_explore", "reset_provider"],
     },
     session_id: { type: "string" },
+    extra_calls: { type: "integer", minimum: 1, maximum: 32 },
     provider: {
       type: "string",
       enum: [
@@ -39,8 +42,9 @@ const controlInput = {
 } as const;
 
 type ControlInput = {
-  action: "status" | "extend" | "reset_provider";
+  action: "status" | "extend" | "extend_explore" | "reset_provider";
   session_id?: string;
+  extra_calls?: number;
   provider?: string;
 };
 
@@ -133,6 +137,7 @@ export const RetrievalPolicyPlugin = Plugin.define({
       },
     });
     await engine.init();
+    const discovery = new DiscoveryBudget();
 
     const registrations: RegistrationLike[] = [];
     const invocations = new InvocationIdentity();
@@ -453,6 +458,19 @@ export const RetrievalPolicyPlugin = Plugin.define({
           return;
         }
         engine.noteAgent(event.sessionID, event.agent);
+        if (event.agent === "explore") {
+          const discoveryDecision = discovery.count(event.sessionID, event.tool, event.input);
+          if (!discoveryDecision.allowed) {
+            const status = discoveryDecision.status;
+            throw new Tool.Error({
+              message:
+                `retrieval-policy: discovery_budget_exhausted — explore used ${status.used}/${status.limit} ` +
+                `search/list calls for this assignment. Stop and report scoped locations and queries, ` +
+                `results, remaining uncertainty, and one concrete next step. The parent may approve one ` +
+                `bounded extension with retrieval_control action=extend_explore.`,
+            });
+          }
+        }
         if (event.tool === "webfetch") trackWebfetch(event);
         const token = invocations.begin(
           event.sessionID,
@@ -532,13 +550,64 @@ export const RetrievalPolicyPlugin = Plugin.define({
       }),
     );
 
+    const extendExploreBudget = async (
+      input: ControlInput,
+      caller: ControlCaller,
+    ): Promise<ControlResult> => {
+      const lookup = async (sessionID: string) => {
+        try {
+          return await context.session.get({ sessionID: sessionID as any });
+        } catch {
+          return undefined;
+        }
+      };
+      const callerInfo = await lookup(caller.sessionID);
+      const callerAgent = caller.agent ?? callerInfo?.agent;
+      if (callerAgent !== "build" && callerAgent !== "plan") {
+        return {
+          ok: false,
+          reason: "extend_not_authorized",
+          message: "only build/plan may extend an explore discovery budget",
+        };
+      }
+      const target = typeof input.session_id === "string" ? input.session_id.trim() : "";
+      if (!target || target === caller.sessionID) {
+        return {
+          ok: false,
+          reason: "forged_session_target",
+          message: "session_id must name an explore child session",
+        };
+      }
+      const targetInfo = await lookup(target);
+      if (!targetInfo) return { ok: false, reason: "session_not_found" };
+      if (targetInfo.parentID !== caller.sessionID) {
+        return {
+          ok: false,
+          reason: "target_not_child",
+          message: "target is not a child of the calling session",
+        };
+      }
+      if (targetInfo.agent !== "explore" && !(targetInfo.agent === undefined && discovery.has(target))) {
+        return {
+          ok: false,
+          reason: "target_not_explore",
+          message: "target child is not an explore assignment",
+        };
+      }
+      const extended = discovery.extend(target, input.extra_calls);
+      if (!extended.ok) {
+        return { ok: false, reason: extended.reason };
+      }
+      return engine.status({ session_id: target }, caller);
+    };
+
     registrations.push(
       await context.tool.transform((editor) => {
         editor.add({
           name: "retrieval_control",
           options: { codemode: false },
           description:
-            "Inspect or extend retrieval budgets, or reset a blocked provider circuit. status returns remaining search/read budget, policy-eligible providers, key presence, and connector_status (configured vs recorded live success; not a live health probe). extend is build/plan-only, targets a direct child session, and grants +3 search/+3 read once. reset_provider is root build/plan-only and clears auth/circuit state without resetting rate caps or budgets.",
+            "Inspect or extend retrieval or exploration budgets, or reset a blocked provider circuit. status returns remaining search/read budget and, for a tracked explore child, its local search/list-call budget; also reports policy-eligible providers, key presence, and connector_status (configured vs recorded live success; not a live health probe). extend is build/plan-only, targets a direct child, and grants +3 search/+3 read once. extend_explore is build/plan-only, targets a direct child, and grants one bounded local search/list extension (8 calls by default, extra_calls up to 32) without resetting its counters. reset_provider is root build/plan-only and clears auth/circuit state without resetting rate caps or budgets.",
           input: controlInput as any,
           async execute(rawInput: unknown, toolContext) {
             const input = rawInput as ControlInput;
@@ -552,11 +621,21 @@ export const RetrievalPolicyPlugin = Plugin.define({
                 ? await engine.status(input, caller)
                 : input.action === "extend"
                   ? await engine.extend(input, caller)
-                  : await engine.resetProvider({ provider: input.provider }, caller);
+                  : input.action === "extend_explore"
+                    ? await extendExploreBudget(input, caller)
+                    : await engine.resetProvider({ provider: input.provider }, caller);
+            const discoveryTarget =
+              typeof input.session_id === "string" && input.session_id.trim()
+                ? input.session_id.trim()
+                : toolContext.sessionID;
+            const report =
+              result.report && discovery.has(discoveryTarget)
+                ? { ...result.report, discovery: discovery.status(discoveryTarget) }
+                : result.report;
             const body = result.ok
               ? {
                   ok: true,
-                  report: result.report,
+                  report,
                   provider: result.provider,
                   reset: result.reset,
                 }
@@ -564,7 +643,7 @@ export const RetrievalPolicyPlugin = Plugin.define({
                   ok: false,
                   reason: result.reason,
                   message: result.message,
-                  report: result.report,
+                  report,
                 };
             return {
               content: JSON.stringify(body),
