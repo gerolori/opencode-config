@@ -49,6 +49,7 @@ async function harness(options: {
   fs?: StateFs;
   lockWaitMs?: number;
   lockStaleMs?: number;
+  nativeSearchAvailable?: boolean;
 } = {}): Promise<Harness> {
   const dir = options.dir ?? (await tempDir());
   const clock = options.clock ?? { now: 1_700_000_000_000 };
@@ -60,6 +61,7 @@ async function harness(options: {
     fs: options.fs,
     lockWaitMs: options.lockWaitMs,
     lockStaleMs: options.lockStaleMs,
+    nativeSearchAvailable: options.nativeSearchAvailable,
   });
   await engine.init();
   return { engine, dir, clock };
@@ -75,33 +77,42 @@ async function before(
   return engine.before({ tool, sessionID, callID }, { args });
 }
 
-function errorEvent(
+type FailedCall = {
+  tool: string;
+  sessionID: string;
+  callID: string;
+  error: string;
+  metadata?: Record<string, unknown>;
+};
+
+function failedCall(
   tool: string,
   sessionID: string,
   callID: string,
   error: string,
   metadata?: Record<string, unknown>,
-) {
-  return {
-    type: "message.part.updated",
-    properties: {
-      part: {
-        id: `part_${callID}`,
-        sessionID,
-        messageID: "msg_1",
-        type: "tool",
-        callID,
-        tool,
-        state: {
-          status: "error",
-          input: {},
-          error,
-          metadata,
-          time: { start: 1, end: 2 },
-        },
+): FailedCall {
+  return { tool, sessionID, callID, error, metadata };
+}
+
+async function recordError(engine: RetrievalEngine, failure: FailedCall) {
+  await engine.after(
+    {
+      tool: failure.tool,
+      sessionID: failure.sessionID,
+      callID: failure.callID,
+      args: {},
+    },
+    {
+      title: "error",
+      output: "",
+      metadata: {
+        ...(failure.metadata ?? {}),
+        isError: true,
+        error: failure.error,
       },
     },
-  };
+  );
 }
 
 async function stateJson(dir: string): Promise<any> {
@@ -168,7 +179,7 @@ describe("retrieval budget policy", () => {
     engine.noteAgent("root", "fetch");
 
     expect((await before(engine, "duckduckgo_search", "root", "p1", { query: "Same   Query!" })).allowed).toBe(true);
-    expect((await before(engine, "tinyfish_search", "root", "p2", { query: "same query" })).allowed).toBe(true);
+    expect((await before(engine, "websearch", "root", "p2", { query: "same query" })).allowed).toBe(true);
     const third = await before(engine, "exa_web_search_exa", "root", "p3", { query: "SAME QUERY" });
     expect(third.allowed).toBe(false);
     expect(third.reason).toBe("provider_limit");
@@ -180,21 +191,21 @@ describe("retrieval budget policy", () => {
     engine.noteAgent("root", "fetch");
 
     expect((await before(engine, "duckduckgo_search", "root", "t1", { query: "retry me" })).allowed).toBe(true);
-    await engine.handleEvent(errorEvent("duckduckgo_search", "root", "t1", "ETIMEDOUT"));
+    await recordError(engine, failedCall("duckduckgo_search", "root", "t1", "ETIMEDOUT"));
     expect((await before(engine, "duckduckgo_search", "root", "t2", { query: "retry me" })).allowed).toBe(true);
-    await engine.handleEvent(errorEvent("duckduckgo_search", "root", "t2", "ETIMEDOUT"));
+    await recordError(engine, failedCall("duckduckgo_search", "root", "t2", "ETIMEDOUT"));
     const third = await before(engine, "duckduckgo_search", "root", "t3", { query: "retry me" });
     expect(third.allowed).toBe(false);
     expect(["provider_circuit_open", "transient_retry_exhausted"]).toContain(third.reason);
   });
 
-  test("deduplicates failure events and never trusts generic page text", async () => {
+  test("deduplicates outcomes and never trusts generic page text", async () => {
     const { engine, dir } = await harness();
     engine.noteAgent("root", "fetch");
 
     await before(engine, "duckduckgo_search", "root", "d1", { query: "dedupe" });
-    await engine.handleEvent(errorEvent("duckduckgo_search", "root", "d1", "ETIMEDOUT"));
-    await engine.handleEvent(errorEvent("duckduckgo_search", "root", "d1", "ETIMEDOUT"));
+    await recordError(engine, failedCall("duckduckgo_search", "root", "d1", "ETIMEDOUT"));
+    await recordError(engine, failedCall("duckduckgo_search", "root", "d1", "ETIMEDOUT"));
     const state = await stateJson(dir);
     expect(state.providers.duckduckgo.failures).toBe(1);
 
@@ -207,21 +218,19 @@ describe("retrieval budget policy", () => {
     expect(successState.providers.duckduckgo.failures).toBe(1);
     expect(successState.providers.duckduckgo.successes).toBe(1);
 
-    // A real error part wins over a completed-tool success and is attributed
-    // through the retained authorized-call record.
-    await engine.handleEvent(errorEvent("duckduckgo_search", "root", "d2", "boom"));
+    // A duplicate error after-hook for an already-completed call is ignored.
+    await recordError(engine, failedCall("duckduckgo_search", "root", "d2", "boom"));
     const afterState = await stateJson(dir);
-    expect(afterState.providers.duckduckgo.failures).toBe(2);
-    expect(afterState.providers.duckduckgo.successes).toBe(0);
+    expect(afterState.providers.duckduckgo.failures).toBe(1);
+    expect(afterState.providers.duckduckgo.successes).toBe(1);
   });
 });
 
 describe("provider circuits", () => {
   test("enforces the local TinyFish 30/minute call cap", async () => {
     const { engine } = await harness({ env: { TINYFISH_API_KEY: "key" } });
-    const bridge = engine.tinyfishBridge();
     const results = [];
-    for (let i = 0; i < 31; i += 1) results.push(await bridge.consumeCall());
+    for (let i = 0; i < 31; i += 1) results.push(await engine.consumeNativeSearchCall());
     expect(results.slice(0, 30).every((result) => result.allowed)).toBe(true);
     expect(results[30].allowed).toBe(false);
     expect(results[30].reason).toBe("minute");
@@ -265,7 +274,7 @@ describe("provider circuits", () => {
         clock,
         env: { TINYFISH_API_KEY: "key" },
       });
-      return engine.tinyfishBridge().consumeCall();
+      return engine.consumeNativeSearchCall();
     };
 
     expect((await make(500, 0)).reason).toBe("hour");
@@ -278,8 +287,8 @@ describe("provider circuits", () => {
     const first = await harness({ dir, clock });
     first.engine.noteAgent("root", "fetch");
     await before(first.engine, "duckduckgo_search", "root", "a1", { query: "auth" });
-    await first.engine.handleEvent(
-      errorEvent("duckduckgo_search", "root", "a1", "401 Unauthorized: invalid API key"),
+    await recordError(first.engine,
+      failedCall("duckduckgo_search", "root", "a1", "401 Unauthorized: invalid API key"),
     );
 
     const second = await harness({ dir, clock });
@@ -296,14 +305,35 @@ describe("provider circuits", () => {
     expect(stillDenied.reason).toBe("provider_operator_action_required");
   });
 
+  test("configured TinyFish auth failure does not become anonymous after expiry", async () => {
+    const clock = { now: 1_700_000_000_000 };
+    const dir = await tempDir();
+    const { engine } = await harness({
+      dir,
+      clock,
+      env: { TINYFISH_API_KEY: "configured" },
+    });
+    engine.noteAgent("root", "fetch");
+    await before(engine, "websearch", "root", "ta1", { query: "auth" });
+    await recordError(
+      engine,
+      failedCall("websearch", "root", "ta1", "401 Unauthorized: invalid API key", {
+        retry_after_ms: 60_000,
+      }),
+    );
+    clock.now += 61_000;
+    const denied = await before(engine, "websearch", "root", "ta2", { query: "next" });
+    expect(denied.reason).toBe("provider_operator_action_required");
+  });
+
   test("quota failures honor Retry-After and expire on clock advance", async () => {
     const clock = { now: 1_700_000_000_000 };
     const dir = await tempDir();
     const first = await harness({ dir, clock });
     first.engine.noteAgent("root", "fetch");
     await before(first.engine, "duckduckgo_search", "root", "q1", { query: "quota" });
-    await first.engine.handleEvent(
-      errorEvent("duckduckgo_search", "root", "q1", "429 Too Many Requests", {
+    await recordError(first.engine,
+      failedCall("duckduckgo_search", "root", "q1", "429 Too Many Requests", {
         retryAfterMs: 60_000,
       }),
     );
@@ -327,8 +357,8 @@ describe("provider circuits", () => {
     const first = await harness({ dir, clock });
     first.engine.noteAgent("root", "fetch");
     await before(first.engine, "gh_grep_searchGitHub", "root", "u1", { query: "quota" });
-    await first.engine.handleEvent(
-      errorEvent("gh_grep_searchGitHub", "root", "u1", "429 Too Many Requests"),
+    await recordError(first.engine,
+      failedCall("gh_grep_searchGitHub", "root", "u1", "429 Too Many Requests"),
     );
 
     const second = await harness({ dir, clock });
@@ -353,8 +383,8 @@ describe("provider circuits", () => {
     first.engine.noteAgent("root", "fetch");
     const url = "https://blocked.example.test/private-page";
     await before(first.engine, "webfetch", "root", "b1", { url });
-    await first.engine.handleEvent(
-      errorEvent("webfetch", "root", "b1", "403 access denied by site policy"),
+    await recordError(first.engine,
+      failedCall("webfetch", "root", "b1", "403 access denied by site policy"),
     );
 
     const second = await harness({ dir, clock });
@@ -386,16 +416,16 @@ describe("spawn and extension guards", () => {
     engine.noteAgent("child", "fetch");
     engine.noteAgent("worker", "fetch");
 
-    expect((await before(engine, "task", "root", "k1", {})).allowed).toBe(true);
-    const nested = await before(engine, "task", "child", "k2", {});
+    expect((await before(engine, "subagent", "root", "k1", {})).allowed).toBe(true);
+    const nested = await before(engine, "subagent", "child", "k2", {});
     expect(nested.allowed).toBe(false);
     expect(nested.reason).toBe("nested_task");
 
-    const worker = await before(engine, "task", "worker", "k3", {});
+    const worker = await before(engine, "subagent", "worker", "k3", {});
     expect(worker.allowed).toBe(false);
     expect(worker.reason).toBe("worker_task_denied");
 
-    const unknown = await before(engine, "task", "ghost", "k4", {});
+    const unknown = await before(engine, "subagent", "ghost", "k4", {});
     expect(unknown.allowed).toBe(false);
     expect(unknown.reason).toBe("agent_unknown");
   });
@@ -476,12 +506,13 @@ describe("audited classification and non-retrieval safety", () => {
   test("maps every audited retrieval tool name", () => {
     const expected: Record<string, { kind: string; provider: string; cost: string }> = {
       duckduckgo_search: { kind: "search", provider: "duckduckgo", cost: "free" },
-      tinyfish_search: { kind: "search", provider: "tinyfish", cost: "free_bounded" },
+      websearch: { kind: "search", provider: "tinyfish", cost: "free_bounded" },
       exa_web_search_exa: { kind: "search", provider: "exa", cost: "free_tier_then_paid" },
       gh_grep_searchGitHub: { kind: "search", provider: "gh_grep", cost: "free" },
       "context7_resolve-library-id": { kind: "search", provider: "context7", cost: "free" },
       "context7_query-docs": { kind: "search", provider: "context7", cost: "free" },
-      websearch: { kind: "search", provider: "builtin_websearch", cost: "unknown_maybe_paid" },
+      context7_resolve_library_id: { kind: "search", provider: "context7", cost: "free" },
+      context7_query_docs: { kind: "search", provider: "context7", cost: "free" },
       websearch_cited: { kind: "search", provider: "builtin_websearch", cost: "unknown_maybe_paid" },
       webfetch: { kind: "read", provider: "builtin_webfetch", cost: "free" },
       duckduckgo_fetch_content: { kind: "read", provider: "duckduckgo", cost: "free" },
@@ -507,15 +538,37 @@ describe("audited classification and non-retrieval safety", () => {
     expect(classifyTool("home_assistant_HassTurnOn")).toBeNull();
   });
 
-  test("denies unknown built-in search backends", async () => {
-    const { engine } = await harness();
+  test("binds native websearch to tinyfish and rejects provider overrides", async () => {
+    const { engine } = await harness({ env: { TINYFISH_API_KEY: "key" } });
     engine.noteAgent("root", "fetch");
-    const websearch = await before(engine, "websearch", "root", "w1", { query: "x" });
-    expect(websearch.allowed).toBe(false);
-    expect(websearch.reason).toBe("unknown_builtin_search_backend");
-    const cited = await before(engine, "websearch_cited", "root", "w2", { query: "x" });
+
+    const native = await before(engine, "websearch", "root", "w1", { query: "x" });
+    expect(native.allowed).toBe(true);
+    const status = await engine.status({}, { sessionID: "root", agent: "fetch" });
+    const tinyfish = status.report?.providers.find((provider) => provider.provider === "tinyfish");
+    expect(tinyfish?.rate_remaining?.minute).toBe(29);
+
+    const override = await before(engine, "websearch", "root", "w2", {
+      query: "x",
+      providerID: "exa",
+    });
+    expect(override.allowed).toBe(false);
+    expect(override.reason).toBe("native_search_provider_override");
+
+    const cited = await before(engine, "websearch_cited", "root", "w3", { query: "x" });
     expect(cited.allowed).toBe(false);
     expect(cited.reason).toBe("unknown_builtin_search_backend");
+  });
+
+  test("fails closed when the native tinyfish provider is unavailable", async () => {
+    const { engine } = await harness({
+      env: { TINYFISH_API_KEY: "key" },
+      nativeSearchAvailable: false,
+    });
+    engine.noteAgent("root", "fetch");
+    const denied = await before(engine, "websearch", "root", "n1", { query: "x" });
+    expect(denied.allowed).toBe(false);
+    expect(denied.reason).toBe("native_search_provider_unavailable");
   });
 
   test("allows local Semble but rejects network git repos", async () => {
@@ -651,6 +704,40 @@ describe("metadata-only persistence", () => {
     const allowed = await before(engine, "duckduckgo_search", "root", "p2", { query: "y" });
     expect(allowed.allowed).toBe(true);
   });
+
+  test("after-outcome persistence failure stays fail-closed and keeps the outcome", async () => {
+    let failState = false;
+    const fs: StateFs = {
+      ...nodeStateFs,
+      writeFile: async (file, data) => {
+        if (failState && file.endsWith(".tmp")) throw new Error("disk full");
+        return nodeStateFs.writeFile(file, data);
+      },
+    };
+    const { engine, dir } = await harness({ fs });
+    engine.noteAgent("root", "fetch");
+
+    expect(
+      (await before(engine, "duckduckgo_search", "root", "pf1", { query: "auth" })).allowed,
+    ).toBe(true);
+
+    failState = true;
+    await recordError(
+      engine,
+      failedCall("duckduckgo_search", "root", "pf1", "401 Unauthorized: invalid API key"),
+    );
+    failState = false;
+
+    const denied = await before(engine, "duckduckgo_search", "root", "pf2", {
+      query: "next",
+    });
+    expect(denied.reason).toBe("provider_operator_action_required");
+
+    const status = await engine.status({}, { sessionID: "root", agent: "fetch" });
+    expect(status.report?.health.persistence_failed).toBe(false);
+    const state = await stateJson(dir);
+    expect(state.providers.duckduckgo.requiresOperator).toBe(true);
+  });
 });
 
 describe("failure attribution and after-hook safety", () => {
@@ -660,8 +747,8 @@ describe("failure attribution and after-hook safety", () => {
 
     const denied = await before(engine, "duckduckgo_search", "main", "n1", { query: "x" });
     expect(denied.reason).toBe("agent_denied");
-    await engine.handleEvent(
-      errorEvent("duckduckgo_search", "main", "n1", "401 Unauthorized: invalid key"),
+    await recordError(engine,
+      failedCall("duckduckgo_search", "main", "n1", "401 Unauthorized: invalid key"),
     );
 
     const state = await stateJson(dir);
@@ -680,11 +767,11 @@ describe("failure attribution and after-hook safety", () => {
     engine.noteAgent("s", "fetch");
     engine.noteAgent("s2", "fetch");
     await before(engine, "duckduckgo_search", "s", "b1", { query: "same" });
-    await before(engine, "tinyfish_search", "s", "b2", { query: "same" });
+    await before(engine, "websearch", "s", "b2", { query: "same" });
     const limited = await before(engine, "exa_web_search_exa", "s", "b3", { query: "same" });
     expect(limited.reason).toBe("provider_limit");
-    await engine.handleEvent(
-      errorEvent("exa_web_search_exa", "s", "b3", "401 Unauthorized: invalid key"),
+    await recordError(engine,
+      failedCall("exa_web_search_exa", "s", "b3", "401 Unauthorized: invalid key"),
     );
     const afterLimit = await stateJson(dir);
     expect(afterLimit.providers.exa?.failures ?? 0).toBe(0);
@@ -694,8 +781,8 @@ describe("failure attribution and after-hook safety", () => {
       query: "different",
     });
     expect(budgetDenied.reason).toBe("budget_exhausted");
-    await engine.handleEvent(
-      errorEvent("duckduckgo_search", "s", "b4", "429 Too Many Requests"),
+    await recordError(engine,
+      failedCall("duckduckgo_search", "s", "b4", "429 Too Many Requests"),
     );
     const afterBudget = await stateJson(dir);
     expect(afterBudget.providers.duckduckgo?.failures ?? 0).toBe(0);
@@ -712,8 +799,8 @@ describe("failure attribution and after-hook safety", () => {
     const otherUrl = "https://healthy.example/b";
 
     expect((await before(engine, "webfetch", "s", "r1", { url: blockedUrl })).allowed).toBe(true);
-    await engine.handleEvent(
-      errorEvent("webfetch", "s", "r1", "403 access denied by site policy"),
+    await recordError(engine,
+      failedCall("webfetch", "s", "r1", "403 access denied by site policy"),
     );
     const state = await stateJson(dir);
     expect(state.providers.builtin_webfetch?.cooldownUntil).toBeUndefined();
@@ -725,12 +812,71 @@ describe("failure attribution and after-hook safety", () => {
     expect(blocked.reason).toBe("resource_blocked");
   });
 
+  test("read site auth/quota is resource-scoped and does not poison provider", async () => {
+    const auth = await harness();
+    auth.engine.noteAgent("s", "fetch");
+    const blockedAuth = "https://site-auth.example/a";
+    const healthyAuth = "https://site-auth.example/b";
+    await before(auth.engine, "webfetch", "s", "sa1", { url: blockedAuth });
+    await recordError(auth.engine, failedCall("webfetch", "s", "sa1", "401 Unauthorized"));
+    let state = await stateJson(auth.dir);
+    expect(state.providers.builtin_webfetch?.requiresOperator ?? false).toBe(false);
+    expect(state.providers.builtin_webfetch?.cooldownUntil).toBeUndefined();
+    expect(state.providers.builtin_webfetch?.failures ?? 0).toBe(0);
+    expect((await before(auth.engine, "webfetch", "s", "sa2", { url: healthyAuth })).allowed).toBe(
+      true,
+    );
+    const authBlocked = await before(auth.engine, "webfetch", "s", "sa3", { url: blockedAuth });
+    expect(authBlocked.reason).toBe("resource_blocked");
+    auth.engine.noteAgent("other", "fetch");
+    const authFallback = await before(
+      auth.engine,
+      "duckduckgo_fetch_content",
+      "other",
+      "sa4",
+      { url: blockedAuth },
+    );
+    expect(authFallback.reason).toBe("resource_blocked");
+
+    const quota = await harness();
+    quota.engine.noteAgent("s", "fetch");
+    const blockedQuota = "https://site-quota.example/a";
+    const healthyQuota = "https://site-quota.example/b";
+    await before(quota.engine, "webfetch", "s", "sq1", { url: blockedQuota });
+    await recordError(quota.engine, failedCall("webfetch", "s", "sq1", "429 Too Many Requests"));
+    state = await stateJson(quota.dir);
+    expect(state.providers.builtin_webfetch?.requiresOperator ?? false).toBe(false);
+    expect(state.providers.builtin_webfetch?.cooldownUntil).toBeUndefined();
+    expect((await before(quota.engine, "webfetch", "s", "sq2", { url: healthyQuota })).allowed).toBe(
+      true,
+    );
+    const quotaBlocked = await before(quota.engine, "webfetch", "s", "sq3", { url: blockedQuota });
+    expect(quotaBlocked.reason).toBe("resource_blocked");
+
+    const ambiguous = await harness();
+    ambiguous.engine.noteAgent("s", "fetch");
+    const blockedAmbiguous = "https://ambiguous.example/a";
+    const healthyAmbiguous = "https://ambiguous.example/b";
+    await before(ambiguous.engine, "webfetch", "s", "sam1", { url: blockedAmbiguous });
+    await recordError(ambiguous.engine, failedCall("webfetch", "s", "sam1", "tool failed"));
+    state = await stateJson(ambiguous.dir);
+    expect(state.providers.builtin_webfetch?.cooldownUntil).toBeUndefined();
+    expect(state.providers.builtin_webfetch?.failures ?? 0).toBe(0);
+    expect(
+      (await before(ambiguous.engine, "webfetch", "s", "sam2", { url: healthyAmbiguous })).allowed,
+    ).toBe(true);
+    const ambiguousBlocked = await before(ambiguous.engine, "webfetch", "s", "sam3", {
+      url: blockedAmbiguous,
+    });
+    expect(ambiguousBlocked.reason).toBe("resource_blocked");
+  });
+
   test("read provider auth (401) still cools the provider", async () => {
     const { engine, dir } = await harness();
     engine.noteAgent("s", "fetch");
     await before(engine, "webfetch", "s", "p1", { url: "https://auth.example/a" });
-    await engine.handleEvent(
-      errorEvent("webfetch", "s", "p1", "401 Unauthorized: invalid API key"),
+    await recordError(engine,
+      failedCall("webfetch", "s", "p1", "401 Unauthorized: invalid API key"),
     );
     const state = await stateJson(dir);
     expect(state.providers.builtin_webfetch.requiresOperator).toBe(true);
@@ -745,8 +891,8 @@ describe("failure attribution and after-hook safety", () => {
     const { engine, dir } = await harness();
     engine.noteAgent("s", "fetch");
     await before(engine, "duckduckgo_search", "s", "a1", { query: "auth" });
-    await engine.handleEvent(
-      errorEvent("duckduckgo_search", "s", "a1", "401 Unauthorized: invalid key"),
+    await recordError(engine,
+      failedCall("duckduckgo_search", "s", "a1", "401 Unauthorized: invalid key"),
     );
 
     await engine.after(
@@ -800,22 +946,6 @@ describe("failure attribution and after-hook safety", () => {
     expect(state.providers.gh_grep.failures).toBe(1);
     expect(state.providers.gh_grep.cooldownUntil).toBeGreaterThan(0);
   });
-
-  test("a real error part wins over a completed-tool success", async () => {
-    const { engine, dir } = await harness();
-    engine.noteAgent("s", "fetch");
-    await before(engine, "duckduckgo_search", "s", "w1", { query: "late-error" });
-    await engine.after(
-      { tool: "duckduckgo_search", sessionID: "s", callID: "w1", args: {} },
-      { title: "ok", output: "", metadata: {} },
-    );
-    await engine.handleEvent(
-      errorEvent("duckduckgo_search", "s", "w1", "401 Unauthorized: invalid key"),
-    );
-    const state = await stateJson(dir);
-    expect(state.providers.duckduckgo.successes).toBe(0);
-    expect(state.providers.duckduckgo.requiresOperator).toBe(true);
-  });
 });
 
 describe("batch reads and opaque resources", () => {
@@ -843,11 +973,17 @@ describe("batch reads and opaque resources", () => {
     });
     expect(overBatch.reason).toBe("batch_too_large");
     expect(overBatch.allowedNextProviders).toEqual([]);
+    const batchStatus = await engine.status({}, { sessionID: "fresh", agent: "fetch" });
+    expect(batchStatus.report?.used.read).toBe(1);
+    expect(batchStatus.report?.used.blockedRead).toBe(1);
 
     const opaque = await before(engine, "duckduckgo_expand_link", "fresh", "b4", {
       token: "opaque-token",
     });
     expect(opaque.reason).toBe("opaque_resource_unverifiable");
+    const opaqueStatus = await engine.status({}, { sessionID: "fresh", agent: "fetch" });
+    expect(opaqueStatus.report?.used.read).toBe(2);
+    expect(opaqueStatus.report?.used.blockedRead).toBe(2);
   });
 
   test("checks blocked resources per URL across extractors, but only for that URL", async () => {
@@ -857,8 +993,8 @@ describe("batch reads and opaque resources", () => {
     const otherUrl = "https://healthy.test/page";
 
     await before(engine, "exa_web_fetch_exa", "s", "x1", { url: blockedUrl });
-    await engine.handleEvent(
-      errorEvent("exa_web_fetch_exa", "s", "x1", "403 access denied by site policy"),
+    await recordError(engine,
+      failedCall("exa_web_fetch_exa", "s", "x1", "403 access denied by site policy"),
     );
 
     const viaOtherExtractor = await before(engine, "webfetch", "s", "x2", { url: blockedUrl });
@@ -910,9 +1046,9 @@ describe("namespaced retry identity", () => {
     const tool = "mcp__exa__web_search_exa";
 
     expect((await before(engine, tool, "s", "m1", { query: "same" })).allowed).toBe(true);
-    await engine.handleEvent(errorEvent(tool, "s", "m1", "ETIMEDOUT"));
+    await recordError(engine, failedCall(tool, "s", "m1", "ETIMEDOUT"));
     expect((await before(engine, tool, "s", "m2", { query: "same" })).allowed).toBe(true);
-    await engine.handleEvent(errorEvent(tool, "s", "m2", "ETIMEDOUT"));
+    await recordError(engine, failedCall(tool, "s", "m2", "ETIMEDOUT"));
     const third = await before(engine, tool, "s", "m3", { query: "same" });
     expect(third.allowed).toBe(false);
     expect(third.reason).toBe("provider_circuit_open");
@@ -924,7 +1060,7 @@ describe("namespaced retry identity", () => {
     const tool = "mcp__exa__web_search_exa";
 
     await before(engine, tool, "s", "n1", { query: "same" });
-    await engine.handleEvent(errorEvent(tool, "s", "n1", "ETIMEDOUT"));
+    await recordError(engine, failedCall(tool, "s", "n1", "ETIMEDOUT"));
     expect((await before(engine, tool, "s", "n2", { query: "same" })).allowed).toBe(true);
     await engine.after(
       { tool, sessionID: "s", callID: "n2", args: { query: "same" } },
@@ -950,8 +1086,8 @@ describe("operator provider reset", () => {
     engine.noteAgent("childBuild", "build");
 
     await before(engine, "exa_web_search_exa", "child", "z1", { query: "auth" });
-    await engine.handleEvent(
-      errorEvent("exa_web_search_exa", "child", "z1", "401 Unauthorized: invalid key"),
+    await recordError(engine,
+      failedCall("exa_web_search_exa", "child", "z1", "401 Unauthorized: invalid key"),
     );
     const beforeReset = await engine.status({}, { sessionID: "child", agent: "fetch" });
     expect(beforeReset.report?.remaining.search).toBe(2);
@@ -983,11 +1119,9 @@ describe("operator provider reset", () => {
     expect(childBuildReset.reason).toBe("reset_not_authorized");
 
     // TinyFish local rate counters survive an auth reset.
-    const bridge = engine.tinyfishBridge();
-    for (let i = 0; i < 5; i += 1) expect((await bridge.consumeCall()).allowed).toBe(true);
-    await before(engine, "tinyfish_search", "child", "t1", { query: "tiny" });
-    await engine.handleEvent(
-      errorEvent("tinyfish_search", "child", "t1", "401 Unauthorized: invalid key"),
+    await before(engine, "websearch", "child", "t1", { query: "tiny" });
+    await recordError(engine,
+      failedCall("websearch", "child", "t1", "401 Unauthorized: invalid key"),
     );
     const tinyReset = await engine.resetProvider(
       { provider: "tinyfish" },
@@ -995,7 +1129,7 @@ describe("operator provider reset", () => {
     );
     expect(tinyReset.ok).toBe(true);
     const state = await stateJson(dir);
-    expect(state.providers.tinyfish.rate.minute.count).toBe(5);
+    expect(state.providers.tinyfish.rate.minute.count).toBe(1);
   });
 
   test("reset rejects unknown providers", async () => {
@@ -1043,7 +1177,7 @@ describe("cross-process transactions", () => {
 
     const results = await Promise.all(
       Array.from({ length: 40 }, (_, index) =>
-        (index % 2 === 0 ? first.engine : second.engine).tinyfishBridge().consumeCall(),
+        (index % 2 === 0 ? first.engine : second.engine).consumeNativeSearchCall(),
       ),
     );
     expect(results.filter((result) => result.allowed)).toHaveLength(30);
@@ -1058,8 +1192,8 @@ describe("cross-process transactions", () => {
     second.engine.noteAgent("shared", "fetch");
 
     await before(first.engine, "duckduckgo_search", "shared", "q1", { query: "auth" });
-    await first.engine.handleEvent(
-      errorEvent("duckduckgo_search", "shared", "q1", "401 Unauthorized: invalid key"),
+    await recordError(first.engine,
+      failedCall("duckduckgo_search", "shared", "q1", "401 Unauthorized: invalid key"),
     );
     const denied = await before(second.engine, "duckduckgo_search", "shared", "q2", {
       query: "next",
@@ -1137,7 +1271,7 @@ describe("durable per-assignment governance", () => {
     expect((await before(first.engine, "duckduckgo_search", "shared", "d1", { query })).allowed).toBe(
       true,
     );
-    expect((await before(first.engine, "tinyfish_search", "shared", "d2", { query })).allowed).toBe(
+    expect((await before(first.engine, "websearch", "shared", "d2", { query })).allowed).toBe(
       true,
     );
 
@@ -1159,14 +1293,14 @@ describe("durable per-assignment governance", () => {
     const first = await harness({ dir, clock });
     first.engine.noteAgent("shared", "fetch");
     await before(first.engine, "duckduckgo_search", "shared", "r1", { query });
-    await first.engine.handleEvent(errorEvent("duckduckgo_search", "shared", "r1", "ETIMEDOUT"));
+    await recordError(first.engine, failedCall("duckduckgo_search", "shared", "r1", "ETIMEDOUT"));
 
     const second = await harness({ dir, clock });
     second.engine.noteAgent("shared", "fetch");
     expect((await before(second.engine, "duckduckgo_search", "shared", "r2", { query })).allowed).toBe(
       true,
     );
-    await second.engine.handleEvent(errorEvent("duckduckgo_search", "shared", "r2", "ETIMEDOUT"));
+    await recordError(second.engine, failedCall("duckduckgo_search", "shared", "r2", "ETIMEDOUT"));
 
     clock.now += 31_000;
     const third = await harness({ dir, clock });
@@ -1191,7 +1325,7 @@ describe("durable per-assignment governance", () => {
     first.engine.noteAgent("child", "fetch");
     await first.engine.extend({ session_id: "child" }, { sessionID: "root", agent: "build" });
     await before(first.engine, "duckduckgo_search", "child", "s1", { query });
-    await first.engine.handleEvent(errorEvent("duckduckgo_search", "child", "s1", "ETIMEDOUT"));
+    await recordError(first.engine, failedCall("duckduckgo_search", "child", "s1", "ETIMEDOUT"));
 
     const second = await harness({ dir, sessions });
     second.engine.noteAgent("child", "fetch");
@@ -1211,254 +1345,5 @@ describe("durable per-assignment governance", () => {
     expect(
       (await before(third.engine, "duckduckgo_search", "child", "s4", { query: "new-query" })).allowed,
     ).toBe(true);
-  });
-});
-
-describe("plugin hook integration", () => {
-  async function pluginHarness(options: {
-    sessionAgent?: string;
-    noKeys?: boolean;
-    fetchImpl?: typeof fetch;
-  } = {}) {
-    const dir = await tempDir();
-    const previousXdg = process.env.XDG_STATE_HOME;
-    const previousExa = process.env.EXA_API_KEY;
-    const previousTiny = process.env.TINYFISH_API_KEY;
-    const previousFetch = globalThis.fetch;
-    process.env.XDG_STATE_HOME = dir;
-    if (options.noKeys) {
-      delete process.env.EXA_API_KEY;
-      delete process.env.TINYFISH_API_KEY;
-    }
-    if (options.fetchImpl) {
-      (globalThis as any).fetch = options.fetchImpl;
-    }
-    const { RetrievalPolicyPlugin } = await import("../plugins/retrieval-policy");
-    const client = {
-      session: {
-        async get({ path }: any) {
-          return {
-            data: {
-              id: path.id,
-              parentID: path.id === "child" ? "root" : undefined,
-            },
-          };
-        },
-        async messages({ path }: any) {
-          return {
-            data:
-              path.id === "child" && options.sessionAgent
-                ? [
-                    {
-                      info: { role: "assistant", mode: options.sessionAgent },
-                      parts: [],
-                    },
-                  ]
-                : [],
-          };
-        },
-      },
-    };
-    const hooks = await RetrievalPolicyPlugin({
-      client,
-      project: {},
-      directory: dir,
-      worktree: dir,
-      serverUrl: new URL("http://localhost"),
-      $: {},
-    } as any);
-    return {
-      hooks,
-      dir,
-      restore() {
-        if (previousXdg === undefined) delete process.env.XDG_STATE_HOME;
-        else process.env.XDG_STATE_HOME = previousXdg;
-        if (previousExa === undefined) delete process.env.EXA_API_KEY;
-        else process.env.EXA_API_KEY = previousExa;
-        if (previousTiny === undefined) delete process.env.TINYFISH_API_KEY;
-        else process.env.TINYFISH_API_KEY = previousTiny;
-        (globalThis as any).fetch = previousFetch;
-      },
-    };
-  }
-
-  test("first fetch identity comes from SDK messages; before/error/after order is safe", async () => {
-    let httpCalls = 0;
-    const h = await pluginHarness({
-      sessionAgent: "fetch",
-      noKeys: true,
-      fetchImpl: (async () => {
-        httpCalls += 1;
-        return new Response("{}", { status: 200 });
-      }) as unknown as typeof fetch,
-    });
-    try {
-      await h.hooks["tool.execute.before"]!(
-        { tool: "duckduckgo_search", sessionID: "child", callID: "i1" },
-        { args: { query: "first" } },
-      );
-      await h.hooks.event!({
-        event: errorEvent("duckduckgo_search", "child", "i1", "401 Unauthorized: invalid key") as any,
-      });
-      await h.hooks["tool.execute.after"]!(
-        { tool: "duckduckgo_search", sessionID: "child", callID: "i1", args: {} },
-        { title: "ok", output: "", metadata: {} },
-      );
-      await expect(
-        h.hooks["tool.execute.before"]!(
-          { tool: "duckduckgo_search", sessionID: "child", callID: "i2" },
-          { args: { query: "second" } },
-        ),
-      ).rejects.toThrow(/operator|retrieval-policy/);
-
-      const buildCtx: any = {
-        sessionID: "child",
-        messageID: "m1",
-        agent: "build",
-        directory: h.dir,
-        worktree: h.dir,
-        abort: new AbortController().signal,
-        metadata() {},
-        async ask() {},
-      };
-      await expect(
-        h.hooks.tool!.tinyfish_search.execute({ query: "x" }, buildCtx),
-      ).rejects.toThrow(/fetch agent/);
-
-      const fetchCtx = { ...buildCtx, agent: "fetch" };
-      await h.hooks["chat.message"]!({ sessionID: "child", agent: "fetch" }, {} as any);
-      await h.hooks["tool.execute.before"]!(
-        { tool: "tinyfish_search", sessionID: "child", callID: "mk1" },
-        { args: { query: "x" } },
-      );
-      const tiny = await h.hooks.tool!.tinyfish_search.execute({ query: "x" }, fetchCtx);
-      const tinyBody = JSON.parse((tiny as any).output);
-      expect(tinyBody.unavailable.code).toBe("missing_api_key");
-      expect(httpCalls).toBe(0);
-      await h.hooks["tool.execute.after"]!(
-        { tool: "tinyfish_search", sessionID: "child", callID: "mk1", args: { query: "x" } },
-        { title: "unavailable", output: (tiny as any).output, metadata: (tiny as any).metadata },
-      );
-
-      const status = await h.hooks.tool!.retrieval_control.execute(
-        { action: "status" },
-        fetchCtx,
-      );
-      expect(JSON.parse((status as any).output).ok).toBe(true);
-    } finally {
-      h.restore();
-    }
-  });
-
-  test("custom TinyFish tool consumes one budget unit and one HTTP call", async () => {
-    let httpCalls = 0;
-    let seenHeaders: Record<string, string> = {};
-    let seenRedirect: string | undefined;
-    const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
-      httpCalls += 1;
-      const headers = new Headers(init?.headers);
-      seenHeaders = { "x-api-key": headers.get("x-api-key") ?? "" };
-      seenRedirect = init?.redirect;
-      return new Response(
-        JSON.stringify({
-          results: [
-            { url: "https://example.test/1", title: "One", snippet: "Snippet" },
-          ],
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
-    }) as unknown as typeof fetch;
-
-    const h = await pluginHarness({
-      sessionAgent: "fetch",
-      fetchImpl,
-    });
-    process.env.TINYFISH_API_KEY = "test-key";
-    try {
-      const ctx: any = {
-        sessionID: "child",
-        messageID: "m1",
-        agent: "fetch",
-        directory: h.dir,
-        worktree: h.dir,
-        abort: new AbortController().signal,
-        metadata() {},
-        async ask() {},
-      };
-      await h.hooks["tool.execute.before"]!(
-        { tool: "tinyfish_search", sessionID: "child", callID: "tf1" },
-        { args: { query: "one" } },
-      );
-      const result = await h.hooks.tool!.tinyfish_search.execute({ query: "one" }, ctx);
-      expect(JSON.parse((result as any).output).results).toHaveLength(1);
-      expect(httpCalls).toBe(1);
-      expect(seenHeaders["x-api-key"]).toBe("test-key");
-      expect(seenRedirect).toBe("error");
-
-      await h.hooks["tool.execute.after"]!(
-        { tool: "tinyfish_search", sessionID: "child", callID: "tf1", args: { query: "one" } },
-        { title: "ok", output: "{}", metadata: { retrieval_outcome: "success" } },
-      );
-      const status = await h.hooks.tool!.retrieval_control.execute({ action: "status" }, ctx);
-      expect(JSON.parse((status as any).output).report.used.search).toBe(1);
-    } finally {
-      h.restore();
-    }
-  });
-
-  test("TinyFish structured 429 flows through the plugin after hook into a circuit", async () => {
-    let httpCalls = 0;
-    const fetchImpl = (async () => {
-      httpCalls += 1;
-      return new Response("", { status: 429, headers: { "retry-after": "60" } });
-    }) as unknown as typeof fetch;
-    const h = await pluginHarness({ sessionAgent: "fetch", fetchImpl });
-    process.env.TINYFISH_API_KEY = "test-key";
-    try {
-      const ctx: any = {
-        sessionID: "child",
-        messageID: "m1",
-        agent: "fetch",
-        directory: h.dir,
-        worktree: h.dir,
-        abort: new AbortController().signal,
-        metadata() {},
-        async ask() {},
-      };
-      await h.hooks["tool.execute.before"]!(
-        { tool: "tinyfish_search", sessionID: "child", callID: "tf429" },
-        { args: { query: "quota" } },
-      );
-      const result: any = await h.hooks.tool!.tinyfish_search.execute({ query: "quota" }, ctx);
-      const body = JSON.parse(result.output);
-      expect(body.unavailable.code).toBe("provider_rate_limited");
-      expect(httpCalls).toBe(1);
-
-      await h.hooks["tool.execute.after"]!(
-        {
-          tool: "tinyfish_search",
-          sessionID: "child",
-          callID: "tf429",
-          args: { query: "quota" },
-        },
-        { title: "unavailable", output: result.output, metadata: result.metadata },
-      );
-      await expect(
-        h.hooks["tool.execute.before"]!(
-          { tool: "tinyfish_search", sessionID: "child", callID: "tf430" },
-          { args: { query: "next" } },
-        ),
-      ).rejects.toThrow(/circuit|operator|retrieval-policy/);
-    } finally {
-      h.restore();
-    }
-  });
-});
-
-describe("plugin module shape", () => {
-  test("exports the loader-accepted id/server shape", async () => {
-    const mod = await import("../plugins/retrieval-policy");
-    expect(mod.default.id).toBe("retrieval-policy");
-    expect(typeof mod.default.server).toBe("function");
   });
 });

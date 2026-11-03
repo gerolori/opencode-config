@@ -1,68 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { Schema } from "effect";
+import { Info } from "@opencode/schema/config";
 
 const root = join(import.meta.dir, "..");
 
-type JsonObject = Record<string, unknown>;
-
-type ModelConfig = {
-  id?: string;
-  reasoning?: boolean;
-  options?: Record<string, unknown>;
-  [key: string]: unknown;
-};
-
-type McpConfig = {
-  type?: string;
-  url?: string;
-  command?: string[];
-  enabled?: boolean;
-  oauth?: boolean | JsonObject;
-  headers?: Record<string, string>;
-  environment?: Record<string, string>;
-};
-
-type AgentConfig = {
-  mode?: string;
-  model?: string;
-  hidden?: boolean;
-  steps?: number;
-  options?: { reasoningEffort?: string; reasoningSummary?: string };
-  reasoningEffort?: string;
-  permission?: Record<string, unknown>;
-  description?: string;
-  temperature?: number;
-  [key: string]: unknown;
-};
-
-type Config = {
-  autoupdate?: boolean;
-  model?: string;
-  small_model?: string;
-  compaction?: {
-    auto?: boolean;
-    preserve_recent_tokens?: number;
-    reserved?: number;
-    keep?: unknown;
-    buffer?: unknown;
-  };
-  subagent_depth?: number;
-  default_agent?: string;
-  plugin?: string[];
-  command?: Record<string, unknown>;
-  permission?: Record<string, unknown>;
-  provider?: {
-    openrouter?: {
-      options?: Record<string, unknown>;
-      models?: Record<string, ModelConfig>;
-    };
-  };
-  mcp?: Record<string, McpConfig>;
-  agent: Record<string, AgentConfig>;
-};
-
-export function stripJsonComments(input: string): string {
+function stripJsonComments(input: string): string {
   let out = "";
   let inString = false;
   let escaped = false;
@@ -125,120 +70,130 @@ export function stripJsonComments(input: string): string {
   return out;
 }
 
-export function loadJsonc(path: string): unknown {
+function loadJsonc(path: string): unknown {
   return JSON.parse(stripJsonComments(readFileSync(path, "utf8")));
 }
 
-function taskMap(agent: AgentConfig): Record<string, string> {
-  return (agent.permission?.task as Record<string, string> | undefined) ?? {};
-}
-
-const config = loadJsonc(join(root, "opencode.jsonc")) as Config;
-const agents = config.agent;
+const rawText = readFileSync(join(root, "opencode.jsonc"), "utf8");
+const raw = loadJsonc(join(root, "opencode.jsonc"));
+const config = Schema.decodeUnknownSync(Info)(raw) as Record<string, any>;
+const agents = config.agents as Record<string, any>;
+const servers = config.mcp.servers as Record<string, any>;
 const workers = ["code", "review", "explore", "fetch", "track", "composio"];
 
-describe("top-level config", () => {
-  test("runtime drift is disabled and the depth is one", () => {
-    expect(config.autoupdate).toBe(false);
-    expect(config.subagent_depth).toBe(1);
-    expect(config.default_agent).toBe("build");
+function allowedSubagents(agent: Record<string, any>): string[] {
+  return (agent.permissions ?? [])
+    .filter((rule: any) => rule.action === "subagent" && rule.effect === "allow")
+    .map((rule: any) => rule.resource)
+    .sort();
+}
+
+describe("native schema", () => {
+  test("the config decodes with the installed 2.2.5 schema", () => {
+    expect(config).toBeDefined();
+    expect(config.$schema).toBe("https://opencode.ai/config.json");
   });
 
-  test("main and small models are explicit and usable", () => {
-    expect(config.model).toBe("openrouter/gpt-6-luna");
-    expect(config.small_model).toBe("openrouter/deepseek-v4.1-flash");
-    expect(config.provider?.openrouter?.models?.["deepseek-v4.1-flash"]).toBeDefined();
-  });
-
-  test("every model reference resolves to a declared custom key", () => {
-    const models = config.provider?.openrouter?.models ?? {};
-    const refs = [
-      config.model,
-      config.small_model,
-      ...Object.values(agents).map((agent) => agent.model),
-    ].filter((ref): ref is string => typeof ref === "string");
-    for (const ref of refs) {
-      const [provider, ...rest] = ref.split("/");
-      expect(provider).toBe("openrouter");
-      expect(models[rest.join("/")]).toBeDefined();
+  test("legacy top-level keys are gone before schema decoding", () => {
+    const rawConfig = raw as Record<string, any>;
+    for (const key of [
+      "autoupdate",
+      "agent",
+      "provider",
+      "permission",
+      "plugin",
+      "small_model",
+      "subagent_depth",
+      "command",
+    ]) {
+      expect(rawConfig[key]).toBeUndefined();
     }
   });
 
-  test("compaction keeps the validated thresholds in canonical keys", () => {
-    expect(config.compaction).toEqual({
-      auto: true,
-      preserve_recent_tokens: 40000,
-      reserved: 100000,
-    });
-    expect(config.compaction?.keep).toBeUndefined();
-    expect(config.compaction?.buffer).toBeUndefined();
-  });
-
-  test("the plugin list is pinned to locally cached versions", () => {
-    expect(config.plugin).toEqual([
-      "@tarquinen/opencode-dcp@3.1.9",
-      "@franlol/opencode-md-table-formatter@0.0.3",
-      "cc-safety-net@0.8.2",
-      "@tarquinen/opencode-smart-title@0.1.7",
-      "@bastiangx/opencode-unmoji@0.3.12",
-      "opencode-ntfy.sh@1.1.0",
+  test("native update, model, compaction, websearch, plugins, depth, and todo", () => {
+    expect(config.update).toBe("disable");
+    expect(config.model).toEqual({ providerID: "openrouter", model: "gpt-6-luna", variant: "high" });
+    expect(config.compaction).toEqual({ auto: true, keep: { tokens: 40000 }, buffer: 100000 });
+    expect(config.websearch).toEqual({ provider: "tinyfish" });
+    expect(config.plugins).toEqual([
+      "@tarquinen/opencode-dcp@3.2.0",
+      "cc-safety-net@2.7.2",
     ]);
-    expect(config.plugin?.some((entry) => entry.endsWith("@latest"))).toBe(false);
-    expect(config.plugin?.filter((entry) => entry.toLowerCase().includes("sqz"))).toEqual([]);
-  });
-
-  test("the nonexistent mystatus command is removed", () => {
-    expect(config.command?.mystatus).toBeUndefined();
-  });
-
-  test("DCP auto-update is disabled without changing compression knobs", () => {
-    const dcp = loadJsonc(join(root, "dcp.jsonc")) as {
-      autoUpdate?: boolean;
-      compress?: { maxContextLimit?: number; minContextLimit?: number; permission?: string };
-    };
-    expect(dcp.autoUpdate).toBe(false);
-    expect(dcp.compress?.maxContextLimit).toBe(800000);
-    expect(dcp.compress?.minContextLimit).toBe(500000);
-    expect(dcp.compress?.permission).toBe("allow");
+    expect(config.default_agent).toBe("build");
+    expect(config.experimental.subagent_depth).toBe(1);
+    expect(config.experimental.todo).toBe(true);
   });
 });
 
-describe("agent topology", () => {
-  test("exactly two primaries: build and plan", () => {
+describe("providers and reasoning", () => {
+  test("OpenRouter wire IDs and reasoning effort capabilities are explicit", () => {
+    const models = config.providers.openrouter.models;
+    expect(config.providers.openrouter.package).toBe("@opencode/ai/providers/openrouter");
+    expect(models["gpt-6-luna"].modelID).toBe("openai/gpt-6-luna");
+    expect(models["gpt-5.6-luna"].modelID).toBe("openai/gpt-5.6-luna");
+    expect(models["deepseek-v4.1-flash-1017"].modelID).toBe("deepseek/deepseek-v4.1-flash-1017");
+    expect(models["deepseek-v4.1-flash"].modelID).toBe("deepseek/deepseek-v4.1-flash");
+    expect(models["gpt-6-luna"].capabilities.reasoning).toEqual({
+      supported: true,
+      effort: ["low", "high", "max"],
+    });
+    expect(models["deepseek-v4.1-flash"].capabilities.reasoning.effort).toContain("low");
+  });
+
+  test("agent model selections use declared custom keys and variants", () => {
+    expect(agents.build.model).toEqual({ providerID: "openrouter", model: "gpt-6-luna", variant: "high" });
+    expect(agents.plan.model).toEqual(agents.build.model);
+    for (const name of ["code", "review", "composio"]) {
+      expect(agents[name].model.model).toBe("deepseek-v4.1-flash-1017");
+      expect(agents[name].model.variant).toBe("low");
+    }
+    for (const name of ["fetch", "explore", "track"]) {
+      expect(agents[name].model.model).toBe("deepseek-v4.1-flash");
+      expect(agents[name].model.variant).toBe("low");
+    }
+    for (const name of Object.keys(agents)) {
+      if (agents[name].disabled) continue;
+      const ref = agents[name].model;
+      expect(config.providers.openrouter.models[ref.model]).toBeDefined();
+      expect(ref.providerID).toBe("openrouter");
+    }
+  });
+
+  test("request bodies preserve per-agent temperatures", () => {
+    expect(agents.build.request.body.temperature).toBe(0.2);
+    expect(agents.plan.request.body.temperature).toBe(0.25);
+    expect(agents.code.request.body.temperature).toBe(0.35);
+    expect(agents.fetch.request.body.temperature).toBe(0.1);
+  });
+});
+
+describe("agents", () => {
+  test("two primaries and six enabled subagents, with general disabled", () => {
     expect(Object.keys(agents).sort()).toEqual([
       "build",
       "code",
       "composio",
       "explore",
       "fetch",
+      "general",
       "plan",
       "review",
       "track",
     ]);
-    const primaries = Object.entries(agents)
-      .filter(([, agent]) => agent.mode === "primary")
+    expect(agents.general.disabled).toBe(true);
+    const enabled = Object.entries(agents)
+      .filter(([, agent]) => !(agent as any).disabled)
       .map(([name]) => name)
       .sort();
-    expect(primaries).toEqual(["build", "plan"]);
-  });
-
-  test("all six workers are subagents with explicit task deny", () => {
-    for (const name of workers) {
-      expect(agents[name].mode).toBe("subagent");
-      expect(taskMap(agents[name])).toEqual({ "*": "deny" });
-    }
-  });
-
-  test("research is retired", () => {
+    expect(enabled).toEqual(["build", "code", "composio", "explore", "fetch", "plan", "review", "track"]);
+    expect(agents.build.mode).toBe("primary");
+    expect(agents.plan.mode).toBe("primary");
+    for (const name of workers) expect(agents[name].mode).toBe("subagent");
     expect(agents.research).toBeUndefined();
-    expect(existsSync(join(root, "agents", "research.md"))).toBe(false);
   });
 
-  test("build delegates only the approved workers", () => {
-    const map = taskMap(agents.build);
-    expect(Object.keys(map)[0]).toBe("*");
-    expect(map["*"]).toBe("deny");
-    expect(Object.keys(map).filter((key) => key !== "*").sort()).toEqual([
+  test("subagent allowlists preserve the build/plan boundary", () => {
+    expect(allowedSubagents(agents.build)).toEqual([
       "code",
       "composio",
       "explore",
@@ -246,89 +201,165 @@ describe("agent topology", () => {
       "review",
       "track",
     ]);
+    expect(allowedSubagents(agents.plan)).toEqual(["composio", "explore", "fetch", "track"]);
+    for (const name of workers) expect(allowedSubagents(agents[name])).toEqual([]);
   });
 
-  test("plan delegates explore/fetch/track/composio but not code", () => {
-    const map = taskMap(agents.plan);
-    expect(Object.keys(map)[0]).toBe("*");
-    expect(map["*"]).toBe("deny");
-    expect(Object.keys(map).filter((key) => key !== "*").sort()).toEqual([
+  test("fetch has a modest step budget", () => {
+    expect(agents.fetch.steps).toBe(10);
+  });
+
+  test("the resolved agent list excludes general and preserves internal helpers", () => {
+    const command = process.platform === "win32" ? "opencode.cmd" : "opencode";
+    const result = spawnSync(command, ["debug", "agents"], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(0);
+    const resolved = JSON.parse(result.stdout) as Array<{ id: string }>;
+    const ids = resolved.map((agent) => agent.id).sort();
+    expect(ids).not.toContain("general");
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        "build",
+        "code",
+        "composio",
+        "explore",
+        "fetch",
+        "plan",
+        "review",
+        "track",
+        "compaction",
+        "summary",
+        "title",
+      ]),
+    );
+  });
+});
+
+describe("MCP native shape", () => {
+  test("servers use disabled/codemode and no legacy enabled flag", () => {
+    expect(Object.keys(servers).sort()).toEqual([
       "composio",
-      "explore",
-      "fetch",
-      "track",
+      "context7",
+      "duckduckgo",
+      "ebay",
+      "gh_grep",
+      "sqz",
     ]);
-    expect(map.code).toBeUndefined();
+    for (const server of Object.values(servers)) {
+      expect((server as any).enabled).toBeUndefined();
+    }
+    expect(servers.ebay.disabled).toBe(true);
+    for (const name of ["context7", "gh_grep", "sqz", "duckduckgo", "composio"]) {
+      expect(servers[name].disabled).toBe(false);
+    }
+    for (const name of ["exa", "semble", "home_assistant"]) {
+      expect(servers[name]).toBeUndefined();
+    }
   });
 
-  test("track is callable from both primaries", () => {
-    expect(taskMap(agents.build).track).toBe("allow");
-    expect(taskMap(agents.plan).track).toBe("allow");
-    expect(agents.track.mode).toBe("subagent");
+  test("Code Mode is explicit for MCP providers and direct for SQZ/eBay", () => {
+    for (const name of ["context7", "gh_grep", "duckduckgo", "composio"]) {
+      expect(servers[name].codemode).toBe(true);
+    }
+    expect(servers.sqz.codemode).toBe(false);
+    expect(servers.ebay.codemode).toBe(false);
+  });
+
+  test("portable base commands; conditional servers are host-added", () => {
+    expect(servers.sqz.command).toEqual(["sqz-mcp"]);
+    expect(servers.ebay.command.join(" ")).toContain("{env:EBAY_MCP_DIR}");
+    expect(rawText).not.toContain("homeassistant.gerosalorenzo.com");
+  });
+
+  test("custom TinyFish search is superseded by native websearch", () => {
+    expect(rawText).not.toContain("tinyfish_search");
+    expect(config.websearch.provider).toBe("tinyfish");
   });
 });
 
-describe("models", () => {
-  test("worker weights are explicit and canonical", () => {
-    const models = config.provider?.openrouter?.models ?? {};
-    expect(models["deepseek-v4.1-flash-1017"]?.id).toBe("deepseek/deepseek-v4.1-flash-1017");
-    expect(models["deepseek-v4.1-flash"]?.id).toBe("deepseek/deepseek-v4.1-flash");
-    expect(models["deepseek-v4.1-flash-1017"]?.reasoning).toBe(true);
-    expect(models["deepseek-v4.1-flash"]?.reasoning).toBe(true);
+describe("DCP and public CLI config", () => {
+  test("DCP keeps thresholds and protects native subagent", () => {
+    const dcp = loadJsonc(join(root, "dcp.jsonc")) as Record<string, any>;
+    expect(dcp.autoUpdate).toBe(false);
+    expect(dcp.compress.maxContextLimit).toBe(800000);
+    expect(dcp.compress.minContextLimit).toBe(500000);
+    expect(dcp.compress.nudgeForce).toBe("soft");
+    expect(dcp.compress.protectedTools).toEqual(
+      expect.arrayContaining(["task", "subagent", "skill", "read", "glob", "grep", "edit", "write"]),
+    );
+    expect(dcp.strategies.deduplication.protectedTools).toEqual(
+      expect.arrayContaining(["task", "subagent", "skill", "edit", "write"]),
+    );
   });
 
-  test("main model key and expected wire ids are explicit", () => {
-    const models = config.provider?.openrouter?.models ?? {};
-    expect(models["gpt-6-luna"]?.id).toBe("openai/gpt-6-luna");
-    expect(models["gpt-5.6-luna"]?.id).toBe("openai/gpt-5.6-luna");
-    expect(config.model).toBe("openrouter/gpt-6-luna");
-    expect(agents.build.model).toBe("openrouter/gpt-6-luna");
-    expect(agents.plan.model).toBe("openrouter/gpt-6-luna");
-  });
-
-  test("code/review/composio keep 1017; fetch/explore/track keep old Flash", () => {
-    for (const name of ["code", "review", "composio"]) {
-      expect(agents[name].model).toBe("openrouter/deepseek-v4.1-flash-1017");
-    }
-    for (const name of ["fetch", "explore", "track"]) {
-      expect(agents[name].model).toBe("openrouter/deepseek-v4.1-flash");
-    }
-  });
-
-  test("reasoning effort uses supported public levels in options only", () => {
-    for (const name of workers) {
-      expect(agents[name].options?.reasoningEffort).toBe("low");
-      expect(agents[name].reasoningEffort).toBeUndefined();
-    }
-    for (const name of ["build", "plan"]) {
-      expect(agents[name].options?.reasoningEffort).toBe("high");
-      expect(agents[name].reasoningEffort).toBeUndefined();
-    }
-  });
-
-  test("no provider price/order pin is added", () => {
-    expect(config.provider?.openrouter?.options).toEqual({});
+  test("public cli.json is a UI-only configuration", () => {
+    const cli = loadJsonc(join(root, "cli.json")) as Record<string, any>;
+    expect(cli.$schema).toBe("https://opencode.ai/v2/cli.json");
+    expect(cli.theme.name).toBe("system");
+    expect(cli.diffs.wrap).toBe("word");
+    expect(cli.session.sidebar).toBe("auto");
+    expect(cli.session.scrollbar).toBe(false);
+    expect(cli.session.thinking).toBe("show");
+    expect(cli.animations).toBe(true);
   });
 });
 
-describe("instructions and agent prompts", () => {
-  test("BEADS is a lazy pointer, not the heavy reference", () => {
-    const beads = readFileSync(join(root, "instructions", "BEADS.md"), "utf8");
-    expect(beads.length).toBeLessThan(2000);
-    expect(beads).toContain("beads-br");
-    expect(beads).toContain("beads-bv");
-    expect(beads).toContain("On Windows only");
-    expect(beads).not.toContain("br create --no-db");
+describe("permission actions", () => {
+  test("native action names are used instead of legacy aliases", () => {
+    const actions = new Set<string>();
+    const collect = (rules: any[]) => rules.forEach((rule) => actions.add(rule.action));
+    collect(config.permissions);
+    for (const name of Object.keys(agents)) collect(agents[name].permissions ?? []);
+    for (const action of ["subagent", "shell", "edit"]) expect(actions.has(action)).toBe(true);
+    for (const action of ["task", "bash", "write", "patch", "apply_patch", "canvas_*", "plan_enter", "plan_exit"]) {
+      expect(actions.has(action)).toBe(false);
+    }
   });
 
-  test("agent markdown declares the same mode as the config", () => {
+  test("the global deny is first and read keeps the .env approval convention", () => {
+    expect(config.permissions[0]).toEqual({ action: "*", resource: "*", effect: "deny" });
+    const readRules = config.permissions.filter((rule: any) => rule.action === "read");
+    expect(readRules).toEqual([
+      { action: "read", resource: "*", effect: "allow" },
+      { action: "read", resource: "*.env", effect: "ask" },
+      { action: "read", resource: "*.env.*", effect: "ask" },
+      { action: "read", resource: "*.env.example", effect: "allow" },
+    ]);
+  });
+});
+
+describe("prompts, commands, and host example", () => {
+  test("research is retired and worker markdown matches native modes", () => {
+    expect(agents.research).toBeUndefined();
+    expect(existsSync(join(root, "agents", "research.md"))).toBe(false);
     for (const name of ["build", "plan"]) {
-      const markdown = readFileSync(join(root, "agents", `${name}.md`), "utf8");
-      expect(markdown).toContain("mode: primary");
+      expect(readFileSync(join(root, "agents", `${name}.md`), "utf8")).toContain("mode: primary");
     }
     for (const name of workers) {
-      const markdown = readFileSync(join(root, "agents", `${name}.md`), "utf8");
-      expect(markdown).toContain("mode: subagent");
+      expect(readFileSync(join(root, "agents", `${name}.md`), "utf8")).toContain("mode: subagent");
     }
+  });
+
+  test("commands stay on plan/build and use the subagent tool", () => {
+    for (const name of ["claim", "triage"]) {
+      const markdown = readFileSync(join(root, "commands", `${name}.md`), "utf8");
+      expect(markdown).toContain("agent: plan");
+      expect(markdown).toContain("`subagent` tool");
+      expect(markdown).not.toContain("task tool");
+    }
+    const worktree = readFileSync(join(root, "commands", "worktree.md"), "utf8");
+    expect(worktree).toContain("agent: build");
+    expect(worktree).toContain("`subagent` tool");
+  });
+
+  test("the tracked host example decodes and contains no credentials", () => {
+    const exampleText = readFileSync(join(root, "opencode.host.example.jsonc"), "utf8");
+    const example = Schema.decodeUnknownSync(Info)(loadJsonc(join(root, "opencode.host.example.jsonc"))) as Record<string, any>;
+    expect(example.mcp.servers.semble.disabled).toBe(true);
+    expect(example.mcp.servers.ebay.disabled).toBe(true);
+    expect(exampleText).not.toMatch(/sk-[A-Za-z0-9]{8,}/);
+    expect(exampleText).not.toMatch(/Bearer [A-Za-z0-9]{8,}/);
   });
 });

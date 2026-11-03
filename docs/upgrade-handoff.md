@@ -1,87 +1,156 @@
-# OpenCode 2.0 upgrade handoff
+# OpenCode 2.2.5 activation handoff
 
-Status: **work in progress**. The 2.0 upgrade has not been performed. Do not treat
-this checkpoint as production-ready or as compatible with 2.0.
+Status: **ACTIVATED at loader/config level**.
 
-Last reported runtime and SDK: **1.19.5**. This is prior evidence, not a fresh
-verification of this checkpoint.
+One `opencode reload` was applied. The existing 2.2.5 background service (PID 41900)
+stayed up unchanged. No restart, migration, search/model call, auth, session read, or
+push was performed. Both idle checks returned 0.
 
-## Implemented
+This handoff records loader/config verification. Real model-turn, tool, and Code Mode
+smoke checks remain pending, along with the manual OpenAI, Exa, TinyFish, and Composio
+steps below.
 
-- Single-level agents
-- Worker-only tracker
-- Low-effort workers
-- Retrieval policy and TinyFish adapter
-- Exit-safe SQZ output compression
-- Lazy memory protocol
-- Portable host initialization
+## Observed activation
 
-## Evidence and review state
+- Runtime/service: `@opencode/cli` 2.2.5, existing service PID 41900 unchanged.
+- SDKs: `@opencode/plugin`, `@opencode/schema`, `@opencode/client` 2.2.5.
+- `bun.lock` authoritative.
+- Active exactly once each:
+  - local `plugins/retrieval-policy.ts` — id `retrieval-policy`
+  - local `plugins/sqz.ts` — id `sqz`
+  - `@tarquinen/opencode-dcp@3.2.0` — id `opencode-dcp`
+  - `cc-safety-net@2.7.2`
+- No failed custom plugins.
+- `plugins.v2-staging/` removed.
+- `plugins.1x-disabled/` archive retained and not loaded.
+- Local entries are not also listed in config.
+- Tests, typecheck, and config/service preflight were green at activation. The test
+  count is an activation snapshot, not a future guarantee.
 
-- Last reported result: **182 passing tests, one POSIX-only skip, no failures**.
-  This is prior evidence, not a fresh test run for this checkpoint.
-- The latest policy fixes have **not** received their final independent re-review.
+## Plugin behavior
 
-## Configuration notes
+- `opencode-dcp` 3.2.0 keeps the existing `dcp.jsonc` shape. Min/max is a soft-nudge
+  band, not hard prune.
+- SQZ is output-only in the native `execute.after` path. It preserves structured shell
+  output and exit metadata, compresses model-visible successful content, never rewrites
+  commands, and falls back on a hard deadline.
+- SQZ MCP remains; do not add RTK or a second compressor.
+- The primary allows `compress`, `customize-opencode`, and `todowrite`; it needs
+  `compress` for SQZ.
+- The four legacy optional plugins remain disabled: table formatter, smart title,
+  unmoji, ntfy. No native replacement is claimed to restore their functionality.
 
-- Main configured model: `openrouter/gpt-6-luna`, with explicit API ID
-  `openai/gpt-6-luna`.
-- Workers use explicit DeepSeek API IDs.
-- The `retrieval_control` action `reset_provider`, durable per-query provider
-  limits, and durable retry counters may still need documentation updates.
-- Documentation may still describe the old main model reference, mandatory host
-  overrides, or pending Semble/SQZ portability work even though those code
-  changes are implemented.
+## Native provider catalog and TinyFish
 
-## 2.0 preparation quarantine
+The native catalog still lists `exa`, `firecrawl`, `parallel`, `tavily`, and `tinyfish`.
+It is not restricted or reduced.
 
-Prepared from checkpoint `23663dbd4988bc40e27d56a353af38292600e1ca`. The runtime is
-still 1.19.5; the upgrade has not been run.
+- The public promise adapter exposes only `add` and `default` — not `list` or `remove`.
+- The plugin discovers TinyFish through `websearch.providers` and pins the supported
+  default with `default.set('tinyfish')`.
+- It does **not** remove the other native providers.
+- The native builtin tool accepts only `query`; explicit overrides are denied.
+- A wrong-provider result or error disables native search without poisoning TinyFish.
+- A real `fromPromise` adapter test exists.
+- The custom TinyFish HTTP adapter was removed.
+- `TINYFISH_API_KEY` is optional; keyless is supported under local safeguards.
+- Vendor keyless allowance and live success are not verified.
+- Local caps (30/minute, 500/hour, 12,000/day) are protective counters, not a quota
+  promise.
 
-- `opencode.jsonc` now has `"plugin": []`.
-- The tracked `plugins/` directory was moved to `plugins.1x-disabled/` without
-  editing either file. It is a temporary source archive only and must not be
-  registered as a plugin path.
-- Disabled local plugins: `plugins/retrieval-policy.ts`, `plugins/sqz.ts`.
-- Original configured package specifiers:
-  - `@tarquinen/opencode-dcp@3.1.9`
-  - `@franlol/opencode-md-table-formatter@0.0.3`
-  - `cc-safety-net@0.8.2`
-  - `@tarquinen/opencode-smart-title@0.1.7`
-  - `@bastiangx/opencode-unmoji@0.3.12`
-  - `opencode-ntfy.sh@1.1.0`
+## Code Mode
 
-This is a transitional, plugin-free configuration. It has **not** been validated
-on OpenCode 2.0.
+- Code Mode leaves shared outer IDs.
+- Identity queues handle normal and permission-reply cleanup while retaining sibling
+  outcomes.
+- Raw `fetch` is blocked; page reads must use the governed `webfetch`.
+- A direct/plain permission reject can emit no after hook.
+- Cleanup uses permission events plus TTL fallback and hard interrupt.
 
-### Restoration if the upgrade is cancelled
+## MCP status
 
-1. Restore the config:
-   `git checkout 23663dbd4988bc40e27d56a353af38292600e1ca -- opencode.jsonc`
-   (or manually restore the exact specifiers above).
-2. Restore discovery: `git mv plugins.1x-disabled plugins`.
-3. Re-run the 1.x checks. If the preparation commit is HEAD, a single
-   `git revert <preparation-commit>` is the cleanest reversible step.
+Connected: `context7`, `DuckDuckGo`, `gh_grep`, `Semble`, `SQZ`.
 
-### Transitional test/import failures
+- eBay is disabled.
+- Composio **needs authentication** under 2.2.5. Old OAuth is not claimed migrated or
+  connected.
+- Exa and Home Assistant are absent because their environment prerequisites are not
+  met.
+- No credential values were read.
 
-Tests, scripts, or imports that reference `plugins/` may fail while the directory
-is quarantined. Do not rewrite them to load the incompatible 1.x plugins. Leave
-them failing until migration or restoration; this is expected in the transitional
-state.
+## Host defaults
 
-## Unfinished checks after the upgrade
+Host initialization adds Exa, Semble, and Home Assistant only when the corresponding
+entries are absent.
 
-- Verify the actual runtime version and configuration migration.
-- Verify SDK compatibility.
-- Verify local plugin discovery.
-- Verify permission behavior.
-- Run a fresh test campaign; the prior 182-test result is not a re-verification.
-- Verify actual outgoing provider requests. These have not been verified.
-- Complete the interactive/manual ChatGPT login and Exa/TinyFish key checks.
+- `opencode.host.example.jsonc` sets Semble `disabled: true` by default.
+- `OPENCODE_DISABLE_SEMBLE=1` is a real one-way kill switch, even for an explicit
+  enabled entry.
+- Otherwise explicit entries, including `disabled: true` and custom fields, are
+  preserved.
+- Exa requires `EXA_API_KEY`.
+- Semble requires a valid local project directory or `~/mcp-servers/semble`, unless the
+  kill switch is set.
+- Home Assistant requires both `HA_MCP_URL` and `HA_BEARER_TOKEN`; no personal fallback.
+- eBay remains disabled.
+- Headers stay in memory, never source or logs.
 
-## Process note
+## Credentials and UI files
 
-The user corrected the supervisor's unreadable delegation prompts. Future prompts
-should use normal language and structured sections. This is a task handoff note,
-not an automatically approved permanent memory rule.
+- `cli.json` is deliberately tracked; it is public UI configuration only.
+- `service.json` / `service.jsonc` are ignored and unprinted. Never commit, print, or
+  copy them.
+- Historical `tui.json` is untouched and not assumed to be the active location.
+- `auth.json` is never copied between hosts.
+- No automatic signups or payments are performed.
+
+## Manual commands still pending
+
+Composio MCP authentication:
+
+```text
+opencode mcp list
+opencode mcp auth [<name>]
+```
+
+`<name>` is optional; choose Composio from the picker. Do not claim the old OAuth was
+migrated.
+
+Native OpenAI login and model selection:
+
+```text
+opencode auth login [<target>]
+opencode models
+opencode auth list [--format default|json]
+opencode auth switch [<target>] [<credential>]
+```
+
+`<target>` is optional and must not be guessed. Read the exact catalog, make one real
+entitlement call, then make an approved manual config change to persist the exact id.
+Do not fabricate a subscription model id or promise fallback.
+
+Exa and TinyFish live checks remain pending until their keys/prerequisites exist. The
+strong main remains on OpenRouter `gpt-6-luna` (`openai/gpt-6-luna`, high) until the
+native OpenAI handoff succeeds. No actual wire provider, entitlement, cost, or billing
+test has been performed.
+
+## Pending runtime smoke
+
+- [ ] Real model turn on the configured strong main.
+- [ ] Real model turn after native OpenAI login and model selection.
+- [ ] Governed retrieval tool call, not just loader config.
+- [ ] Code Mode smoke: shared outer IDs, identity queues, permission-reply cleanup,
+      sibling outcomes retained.
+- [ ] Raw Code Mode `fetch` blocked and governed `webfetch` succeeds.
+- [ ] Native TinyFish live search, keyed and/or keyless as available.
+- [ ] Keyed Exa live search.
+- [ ] Composio MCP authentication and one workflow.
+- [ ] Old session reopened/attached through a new 2.2.5 client.
+- [ ] Real wire provider, entitlement, cost, and billing observation.
+
+## Rollback
+
+Old checkpoint rollback is historical. Do not use 1.x config as a drop-in on 2.2.5.
+Check downgrade and session compatibility first, then restore only reviewed Git
+checkpoints. Do not copy auth or service credentials between hosts. See
+`docs/portability.md`.

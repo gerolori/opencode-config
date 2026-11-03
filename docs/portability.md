@@ -20,53 +20,72 @@ https://github.com/gerolori/opencode-config.git
 
 Never clone over an existing directory. Check out beside it and merge deliberately.
 
-## Baseline and rollback
+## Local checkpoints
 
-- Baseline config commit: `c31d80c`.
-- Related dotfiles commit: `bad2347` (local only).
-- Local rollback archive:
-  `C:\Users\hermes\.local\share\opencode\config-backups\20261102-220711`.
+- Baseline config commit: `c31d80c` (local commit).
+- Related dotfiles commit: `bad2347` (local-only).
+- The 2.2.5 activation/optimization remains uncommitted for review unless a later
+  commit actually exists. Do not claim a new commit or push.
 
-The baseline commit is the recovery point for removed telemetry assets and config
-edits.
+Old checkpoint rollback is **historical**. Do not use 1.x config as a drop-in on
+2.2.5. Check downgrade and session compatibility first.
 
-## Reversible change discipline
+## Service, reload, and session compatibility
 
+Activation used exactly one `opencode reload`; the existing 2.2.5 service PID stayed
+unchanged. No restart or migration was performed.
+
+- `opencode service status` reports service state.
+- `opencode reload` reloads configuration for the running service. It does not refresh
+  the service process environment.
+- Keys and host variables must be present in the background service's launch
+  environment. Apply them with an idle `opencode service restart` from the configured
+  shell or launcher; reopening only the TUI is insufficient.
+- An already-open session keeps its loaded tools. Reopen it or attach through a new
+  2.2.5 client to pick up the activated toolset.
+- Do not demand a service restart after a config-only reload.
+- `opencode service start/restart` are operational actions, not documentation checks.
+
+## Rollback discipline
+
+- Use reviewed Git checkpoints.
 - Inspect `git status` and `git diff` before and after changes.
 - Restore only explicitly reviewed paths with `git restore <path>`.
 - Do not use `git reset --hard`.
-- Do not clobber ignored private overrides (`opencode.private.local.json`,
-  `notification-ntfy.json`, `auth.json`, local env files).
+- Do not clobber ignored private/credential files.
+- Do not recommend reverting 1.x config on top of 2.2.5 without downgrade and
+  session-compatibility checks.
 - Do not commit or push unless explicitly requested.
 
-## Runtime vs source
+## Host defaults
 
-Runtime upgrades are independent of the source checkout. OpenCode auto-updated from
-1.18.18 to 1.19.5 on its own. `autoupdate` is now `false`.
+Host initialization adds Exa, Semble, and Home Assistant defaults **only when the
+corresponding entries are absent**.
 
-- Upgrade the runtime manually.
-- Update the `@opencode-ai/plugin` pin and `bun.lock` together.
-- Run `bun run preflight -- --config` before trusting the combination.
-- Do not assume a runtime/SDK match; verify it.
+- `opencode.host.example.jsonc` sets Semble `disabled: true` by default.
+- `OPENCODE_DISABLE_SEMBLE=1` is a real one-way kill switch, even for an explicit
+  enabled entry.
+- Otherwise explicit entries, including `disabled: true` and custom fields, are
+  preserved.
+- Exa requires `EXA_API_KEY`; it is currently absent because the env prerequisite is not
+  met.
+- Semble requires a valid local project directory (env override or
+  `~/mcp-servers/semble`), unless the kill switch is set.
+- Home Assistant requires both `HA_MCP_URL` and `HA_BEARER_TOKEN`; no personal fallback,
+  and it is currently absent because the env prerequisites are not met.
+- eBay stays disabled pending diagnosis.
 
-## Host overlays
+`opencode.private.local.json` is optional and not required for the connected Semble
+instance on this host. Do not hard-code a machine path into tracked config.
 
-Tracked:
+## Credential and UI files
 
-- `opencode.host.example.jsonc` — uses `SEMBLE_MCP_DIR` and `EBAY_MCP_DIR`, contains
-  no credentials.
-
-Ignored:
-
-- `opencode.private.local.json` — this host's Semble path. It must be loaded with
-  `OPENCODE_CONFIG` to date; automatic loading is not confirmed.
-
-Preferred final behavior, pending final integration files:
-
-- HOME-derived auto-enable for Semble, or
-- a documented local override path.
-
-Do not hard-code a machine path into tracked config.
+- `cli.json` is deliberately tracked; it is public UI configuration only.
+- `service.json` / `service.jsonc` may contain service credentials. They are ignored and
+  unprinted; never commit, print, or copy them.
+- `auth.json` is never copied between hosts.
+- Headers and keys stay in memory or the environment, never in source or logs.
+- Historical `tui.json` is untouched and not assumed to be the active location.
 
 ## VM and OS notes
 
@@ -78,21 +97,16 @@ Do not hard-code a machine path into tracked config.
 - Secrets stay in the host environment or an approved secret store, never in tracked
   Nix files.
 
-## Cross-host rules
-
-- Do not copy `auth.json`.
-- Do not copy `opencode.private.local.json` blindly; adapt paths.
-- Do not copy retrieval state; it is per-host operational data.
-- Keys are entered per host with the masked flows.
-
 ## Verification after portability changes
 
 ```text
-bun run typecheck
-bun test
-bun run preflight -- --config
-opencode debug config
+opencode --version
+opencode --help
+opencode stats --help
+git status --short
+git diff --stat
 ```
 
-Confirm the host overlay is actually merged, the expected MCP entries are enabled, and
-no credential value is printed.
+Do not start/restart the service or read sessions as part of documentation
+verification. Loader/config activation is complete; pending real model-turn, tool, and
+Code Mode smoke checks are in `docs/verification.md`.

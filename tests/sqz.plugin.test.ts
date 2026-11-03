@@ -1,73 +1,182 @@
 import { describe, expect, test } from "bun:test";
-import type { Hooks } from "@opencode-ai/plugin";
+import type { Tool } from "@opencode/schema/tool";
 import pluginModule, * as moduleNamespace from "../plugins/sqz";
-import { createSqzPlugin } from "../lib/sqz/plugin";
-import { createMockSpawn, okResult, SAMPLE_COMMAND_OUTPUT } from "../lib/sqz/testing";
-
-type AfterHook = NonNullable<Hooks["tool.execute.after"]>;
-
-async function makeHooks(
-  handler: Parameters<typeof createMockSpawn>[0],
-): Promise<{ hooks: Hooks; mock: ReturnType<typeof createMockSpawn> }> {
-  const mock = createMockSpawn(handler);
-  const factory = createSqzPlugin({ spawn: mock.spawn });
-  const hooks = await factory({} as never);
-  return { hooks, mock };
-}
-
-function afterOf(hooks: Hooks): AfterHook {
-  const hook = hooks["tool.execute.after"];
-  if (!hook) throw new Error("tool.execute.after hook missing");
-  return hook;
-}
-
-function call(
-  hook: AfterHook,
-  command: string,
-  output: { title: string; output: string; metadata: any },
-  args: Record<string, unknown> = { command },
-  tool = "bash",
-): Promise<void> {
-  return hook(
-    { tool, sessionID: "ses_1", callID: "call_1", args },
-    output,
-  );
-}
+import {
+  createMockSpawn,
+  okResult,
+  SAMPLE_COMMAND_OUTPUT,
+  SOURCE_FIXTURE,
+} from "../lib/sqz/testing";
+import type { ExecuteAfterEvent } from "./helpers/events";
 
 const COMPRESSED = "short compressed command output";
 const sqzOnPath = Bun.which("sqz");
 
-describe("plugin entrypoint shape", () => {
-  test("exactly one default plugin export and no duplicate entrypoint", () => {
+type HookCallback = (event: ExecuteAfterEvent) => Promise<void> | void;
+
+type SetupResult = {
+  invoke: (event: ExecuteAfterEvent) => Promise<void>;
+  cleanup: () => Promise<void> | void;
+  disposed: () => boolean;
+  hookNames: string[];
+};
+
+/** Exercise the real inactive entrypoint with the real 2.x hook contract. */
+async function setupPlugin(
+  options: Record<string, unknown> = {},
+): Promise<SetupResult> {
+  let callback: HookCallback | undefined;
+  let isDisposed = false;
+  const hookNames: string[] = [];
+
+  const context = {
+    options,
+    tool: {
+      hook: async (name: string, cb: HookCallback) => {
+        hookNames.push(name);
+        callback = cb;
+        return {
+          dispose: async () => {
+            isDisposed = true;
+          },
+        };
+      },
+    },
+  };
+
+  const cleanup = await pluginModule.setup(context as never);
+
+  return {
+    invoke: async (event) => {
+      if (!callback) throw new Error("execute.after hook was not registered");
+      await callback(event);
+    },
+    cleanup: cleanup as () => Promise<void> | void,
+    disposed: () => isDisposed,
+    hookNames,
+  };
+}
+
+function shellResult(
+  text: string,
+  options: {
+    metadata?: Record<string, unknown>;
+    structured?: Record<string, unknown>;
+    content?: Tool.Result["content"];
+  } = {},
+): Tool.Result {
+  const structured = {
+    output: text,
+    truncated: false,
+    exit: 0,
+    status: "completed",
+    ...options.structured,
+  };
+  const metadata = {
+    status: "completed",
+    truncated: false,
+    exit: 0,
+    shellID: "sh_1",
+    ...options.metadata,
+  };
+  return {
+    output: structured,
+    content:
+      options.content === undefined
+        ? [{ type: "text", text }]
+        : options.content,
+    metadata,
+  };
+}
+
+function completedEvent(
+  result: Tool.Result,
+  options: {
+    command?: string;
+    id?: string;
+    tool?: string;
+  } = {},
+): ExecuteAfterEvent {
+  return {
+    tool: options.tool ?? "shell",
+    sessionID: "ses_1" as never,
+    agent: "code" as never,
+    messageID: "msg_1" as never,
+    id: (options.id ?? "call_1") as never,
+    input: { command: options.command ?? "git status" },
+    status: "completed",
+    result,
+  };
+}
+
+function errorEvent(error: Tool.Error, id = "call_err"): ExecuteAfterEvent {
+  return {
+    tool: "shell",
+    sessionID: "ses_1" as never,
+    agent: "code" as never,
+    messageID: "msg_1" as never,
+    id: id as never,
+    input: { command: "false" },
+    status: "error",
+    error,
+  };
+}
+
+function contentText(result: Tool.Result): string[] {
+  const content = result.content;
+  if (typeof content === "string") return [content];
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((part) => (part.type === "text" ? [part.text] : []));
+}
+
+describe("inactive 2.x entrypoint", () => {
+  test("exports exactly one Plugin.define entrypoint", () => {
     expect(Object.keys(moduleNamespace).sort()).toEqual(["default"]);
     expect(pluginModule.id).toBe("sqz");
-    expect(typeof pluginModule.server).toBe("function");
+    expect(typeof pluginModule.setup).toBe("function");
   });
 
-  test("registers a single after hook and no before hook", async () => {
-    const { hooks } = await makeHooks(() => okResult(COMPRESSED));
-    expect(Object.keys(hooks)).toEqual(["tool.execute.after"]);
-    expect("tool.execute.before" in hooks).toBe(false);
+  test("registers one execute.after hook and disposes it", async () => {
+    const mock = createMockSpawn(() => okResult(COMPRESSED));
+    const plugin = await setupPlugin({ spawn: mock.spawn });
+
+    expect(plugin.hookNames).toEqual(["execute.after"]);
+    expect(plugin.disposed()).toBe(false);
+
+    await plugin.cleanup();
+    expect(plugin.disposed()).toBe(true);
   });
 });
 
-describe("successful shell output", () => {
-  test("replaces only output; title, metadata, args and exit code survive", async () => {
-    const { hooks, mock } = await makeHooks(() => okResult(COMPRESSED));
-    const metadata = { exitCode: 0, stdout: "raw stdout", stderr: "" };
-    const args = { command: "git status" };
-    const argsSnapshot = JSON.parse(JSON.stringify(args));
-    const output = { title: "git status", output: SAMPLE_COMMAND_OUTPUT, metadata };
+describe("2.x completed shell results", () => {
+  test("compresses only model-visible content and preserves structured output", async () => {
+    const mock = createMockSpawn(() => okResult(COMPRESSED));
+    const plugin = await setupPlugin({ spawn: mock.spawn });
+    const result = shellResult(SAMPLE_COMMAND_OUTPUT);
+    const structured = result.output;
+    const metadata = result.metadata;
+    const event = completedEvent(result);
+    const inputSnapshot = JSON.parse(JSON.stringify(event.input));
 
-    await call(afterOf(hooks), "git status", output, args);
+    await plugin.invoke(event);
 
-    expect(output.output).toBe(COMPRESSED);
-    expect(output.title).toBe("git status");
-    expect(output.metadata).toBe(metadata);
-    expect(output.metadata).toEqual({ exitCode: 0, stdout: "raw stdout", stderr: "" });
-    expect(args).toEqual(argsSnapshot);
+    expect(contentText(result)).toEqual([COMPRESSED]);
+    expect(result.output).toBe(structured);
+    expect(result.output).toEqual({
+      output: SAMPLE_COMMAND_OUTPUT,
+      truncated: false,
+      exit: 0,
+      status: "completed",
+    });
+    expect(result.metadata).toBe(metadata);
+    expect(result.metadata).toEqual({
+      status: "completed",
+      truncated: false,
+      exit: 0,
+      shellID: "sh_1",
+    });
+    expect(event.input).toEqual(inputSnapshot);
     expect(mock.calls).toHaveLength(1);
-    expect(mock.calls[0]!.file).toBe("sqz");
     expect(mock.calls[0]!.args).toEqual([
       "compress",
       "--no-cache",
@@ -76,223 +185,292 @@ describe("successful shell output", () => {
     ]);
   });
 
-  test("non-zero exit still compresses output and preserves exit metadata", async () => {
-    const { hooks, mock } = await makeHooks(() => okResult(COMPRESSED));
-    const metadata = { exitCode: 1, stdout: "raw stdout", stderr: "command failed" };
-    const output = {
-      title: "cargo test",
-      output: SAMPLE_COMMAND_OUTPUT,
-      metadata,
+  test("preserves notice text and file content parts", async () => {
+    const mock = createMockSpawn(() => okResult(COMPRESSED));
+    const plugin = await setupPlugin({ spawn: mock.spawn });
+    const notice = { type: "text" as const, text: "notice stays exact" };
+    const file = {
+      type: "file" as const,
+      uri: "data:text/plain;base64,eA==",
+      mime: "text/plain",
+      name: "out.txt",
     };
-
-    await call(afterOf(hooks), "cargo test", output);
-
-    expect(output.output).toBe(COMPRESSED);
-    expect(output.metadata).toBe(metadata);
-    expect(output.metadata).toEqual({
-      exitCode: 1,
-      stdout: "raw stdout",
-      stderr: "command failed",
+    const result = shellResult(SAMPLE_COMMAND_OUTPUT, {
+      content: [{ type: "text", text: SAMPLE_COMMAND_OUTPUT }, notice, file],
     });
-    expect(mock.calls[0]!.args).toContain("cargo");
+
+    await plugin.invoke(completedEvent(result));
+
+    const content = result.content as Tool.Content[];
+    expect(content[0]).toEqual({ type: "text", text: COMPRESSED });
+    expect(content[1]).toBe(notice);
+    expect(content[2]).toBe(file);
   });
 
-  test("multiline commands are never mutated", async () => {
-    const { hooks, mock } = await makeHooks(() => okResult(COMPRESSED));
+  test("supports string content as the model-visible text", async () => {
+    const mock = createMockSpawn(() => okResult(COMPRESSED));
+    const plugin = await setupPlugin({ spawn: mock.spawn });
+    const result = shellResult(SAMPLE_COMMAND_OUTPUT, {
+      content: SAMPLE_COMMAND_OUTPUT,
+    });
+
+    await plugin.invoke(completedEvent(result));
+
+    expect(result.content).toBe(COMPRESSED);
+  });
+
+  test("does not patch structured output when content is absent", async () => {
+    const mock = createMockSpawn(() => okResult(COMPRESSED));
+    const plugin = await setupPlugin({ spawn: mock.spawn });
+    const result: Tool.Result = {
+      output: {
+        output: SAMPLE_COMMAND_OUTPUT,
+        truncated: false,
+        exit: 0,
+        status: "completed",
+      },
+      metadata: { status: "completed", truncated: false, exit: 0 },
+    };
+
+    await plugin.invoke(completedEvent(result));
+
+    expect(result.output).toEqual({
+      output: SAMPLE_COMMAND_OUTPUT,
+      truncated: false,
+      exit: 0,
+      status: "completed",
+    });
+    expect(mock.calls).toHaveLength(0);
+  });
+
+  test("multiline command input is never mutated", async () => {
+    const mock = createMockSpawn(() => okResult(COMPRESSED));
+    const plugin = await setupPlugin({ spawn: mock.spawn });
     const command = "echo one\necho two\nif ($?) { echo three }";
-    const args = { command };
-    const argsSnapshot = JSON.parse(JSON.stringify(args));
-    const metadata = { exitCode: 0 };
-    const output = { title: "multi", output: SAMPLE_COMMAND_OUTPUT, metadata };
+    const result = shellResult(SAMPLE_COMMAND_OUTPUT);
+    const event = completedEvent(result, { command });
+    const snapshot = JSON.parse(JSON.stringify(event.input));
 
-    await call(afterOf(hooks), command, output, args);
+    await plugin.invoke(event);
 
-    expect(args).toEqual(argsSnapshot);
-    expect(args.command).toBe(command);
-    expect(output.metadata).toBe(metadata);
-    expect(output.output).toBe(COMPRESSED);
+    expect(event.input).toEqual(snapshot);
+    expect((event.input as { command: string }).command).toBe(command);
+    expect(contentText(result)).toEqual([COMPRESSED]);
+  });
+});
+
+describe("2.x failure and metadata guards", () => {
+  test("non-zero exit is untouched and never compressed", async () => {
+    const mock = createMockSpawn(() => okResult(COMPRESSED));
+    const plugin = await setupPlugin({ spawn: mock.spawn });
+    const result = shellResult(SAMPLE_COMMAND_OUTPUT, {
+      metadata: { exit: 1 },
+      structured: { exit: 1 },
+    });
+    const metadata = result.metadata;
+    const structured = result.output;
+
+    await plugin.invoke(completedEvent(result, { command: "cargo test" }));
+
+    expect(contentText(result)).toEqual([SAMPLE_COMMAND_OUTPUT]);
+    expect(result.metadata).toBe(metadata);
+    expect(result.output).toBe(structured);
+    expect(mock.calls).toHaveLength(0);
+  });
+
+  test("structured-output non-zero exit is also skipped", async () => {
+    const mock = createMockSpawn(() => okResult(COMPRESSED));
+    const plugin = await setupPlugin({ spawn: mock.spawn });
+    const result = shellResult(SAMPLE_COMMAND_OUTPUT, {
+      // Metadata says 0, but the structured output reports failure.
+      structured: { exit: 2 },
+    });
+
+    await plugin.invoke(completedEvent(result));
+
+    expect(contentText(result)).toEqual([SAMPLE_COMMAND_OUTPUT]);
+    expect(mock.calls).toHaveLength(0);
+  });
+
+  test("signal and timeout completions are untouched", async () => {
+    const mock = createMockSpawn(() => okResult(COMPRESSED));
+    const plugin = await setupPlugin({ spawn: mock.spawn });
+
+    const signalled = shellResult(SAMPLE_COMMAND_OUTPUT, {
+      metadata: { signal: "SIGTERM" },
+      structured: { signal: "SIGTERM", exit: undefined },
+    });
+    const timedOut = shellResult(SAMPLE_COMMAND_OUTPUT, {
+      metadata: { timeout: true },
+      structured: { timeout: true },
+    });
+
+    await plugin.invoke(completedEvent(signalled, { id: "call_signal" }));
+    await plugin.invoke(completedEvent(timedOut, { id: "call_timeout" }));
+
+    expect(contentText(signalled)).toEqual([SAMPLE_COMMAND_OUTPUT]);
+    expect(contentText(timedOut)).toEqual([SAMPLE_COMMAND_OUTPUT]);
+    expect(mock.calls).toHaveLength(0);
+  });
+
+  test("status:error preserves the Tool.Error object verbatim", async () => {
+    const mock = createMockSpawn(() => okResult(COMPRESSED));
+    const plugin = await setupPlugin({ spawn: mock.spawn });
+    const error = { message: "boom" } as Tool.Error;
+    const event = errorEvent(error);
+    if (event.status !== "error") throw new Error("expected error event");
+
+    await plugin.invoke(event);
+
+    expect(event.status).toBe("error");
+    expect(event.error).toBe(error);
+    expect(mock.calls).toHaveLength(0);
+  });
+});
+
+describe("2.x duplicate and scope guards", () => {
+  test("already SQZ-marked content is not compressed again", async () => {
+    const mock = createMockSpawn(() => okResult(COMPRESSED));
+    const plugin = await setupPlugin({ spawn: mock.spawn });
+    const already = `[sqz] 27/181 tokens (85% reduction)\n${SAMPLE_COMMAND_OUTPUT}`;
+    const result = shellResult(already);
+
+    await plugin.invoke(completedEvent(result));
+
+    expect(contentText(result)).toEqual([already]);
+    expect(mock.calls).toHaveLength(0);
+  });
+
+  test("same call ID and same result object are compressed only once", async () => {
+    const mock = createMockSpawn(() => okResult(COMPRESSED));
+    const plugin = await setupPlugin({ spawn: mock.spawn });
+    const result = shellResult(SAMPLE_COMMAND_OUTPUT);
+    const event = completedEvent(result, { id: "call_duplicate" });
+
+    await plugin.invoke(event);
+    await plugin.invoke(event);
+
+    const secondResult = shellResult(SAMPLE_COMMAND_OUTPUT);
+    await plugin.invoke(completedEvent(secondResult, { id: "call_duplicate" }));
+
+    expect(mock.calls).toHaveLength(1);
+    expect(contentText(secondResult)).toEqual([SAMPLE_COMMAND_OUTPUT]);
+  });
+
+  test("native Code Mode outer execute never re-compresses leaf output", async () => {
+    const mock = createMockSpawn(() => okResult(COMPRESSED));
+    const plugin = await setupPlugin({ spawn: mock.spawn });
+
+    const leaf = shellResult(SAMPLE_COMMAND_OUTPUT);
+    await plugin.invoke(completedEvent(leaf, { id: "call_leaf", command: "git log" }));
+    expect(mock.calls).toHaveLength(1);
+
+    const leafText = contentText(leaf)[0]!;
+    const outer: Tool.Result = {
+      output: { output: leafText, toolCalls: [], files: [] },
+      content: [{ type: "text", text: leafText }],
+      metadata: { toolCalls: [] },
+    };
+    const outerMetadata = outer.metadata;
+    const outerOutput = outer.output;
+
+    await plugin.invoke(
+      completedEvent(outer, { id: "call_outer", tool: "execute", command: "execute" }),
+    );
+
+    expect(contentText(outer)).toEqual([leafText]);
+    expect(outer.metadata).toBe(outerMetadata);
+    expect(outer.output).toBe(outerOutput);
     expect(mock.calls).toHaveLength(1);
   });
 
-  test("Windows and POSIX executable paths both yield portable labels", async () => {
-    const { hooks, mock } = await makeHooks(() => okResult(COMPRESSED));
-    await call(
-      afterOf(hooks),
-      "C:\\Tools\\git.exe status",
-      { title: "win", output: SAMPLE_COMMAND_OUTPUT, metadata: {} },
-      { command: "C:\\Tools\\git.exe status" },
+  test("non-shell and MCP SQZ tools are untouched", async () => {
+    const mock = createMockSpawn(() => okResult(COMPRESSED));
+    const plugin = await setupPlugin({ spawn: mock.spawn });
+    const sqzResult = shellResult(SAMPLE_COMMAND_OUTPUT);
+    const readResult = shellResult(SAMPLE_COMMAND_OUTPUT);
+
+    await plugin.invoke(
+      completedEvent(sqzResult, { tool: "sqz_compress", command: "compress" }),
     );
-    await call(
-      afterOf(hooks),
-      "/usr/bin/node script.js",
-      { title: "posix", output: SAMPLE_COMMAND_OUTPUT, metadata: {} },
-      { command: "/usr/bin/node script.js" },
+    await plugin.invoke(
+      completedEvent(readResult, { tool: "read", command: "read" }),
     );
 
-    expect(mock.calls.map((entry) => entry.args.at(-1))).toEqual(["git", "node"]);
+    expect(contentText(sqzResult)).toEqual([SAMPLE_COMMAND_OUTPUT]);
+    expect(contentText(readResult)).toEqual([SAMPLE_COMMAND_OUTPUT]);
+    expect(mock.calls).toHaveLength(0);
   });
-});
 
-describe("fallbacks leave original output untouched", () => {
-  const cases: Array<[string, () => ReturnType<typeof okResult>]> = [
-    [
-      "missing compressor",
-      () => ({
-        code: null,
-        stdout: "",
-        stderr: "",
-        error: Object.assign(new Error("spawn sqz ENOENT"), { code: "ENOENT" }),
+  test("shell commands invoking SQZ are skipped", async () => {
+    const mock = createMockSpawn(() => okResult(COMPRESSED));
+    const plugin = await setupPlugin({ spawn: mock.spawn });
+    const direct = shellResult(SAMPLE_COMMAND_OUTPUT);
+    const pipeline = shellResult(SAMPLE_COMMAND_OUTPUT);
+
+    await plugin.invoke(
+      completedEvent(direct, { command: "sqz compress --cmd git" }),
+    );
+    await plugin.invoke(
+      completedEvent(pipeline, {
+        id: "call_pipeline",
+        command: "cat log.txt | sqz compress --cmd cat",
       }),
-    ],
-    ["compressor failure", () => okResult("tiny", { code: 1 })],
-    ["timeout", () => okResult("tiny", { timedOut: true })],
-    ["empty result", () => okResult("")],
-    ["whitespace result", () => okResult("  \n ")],
-    ["longer result", () => okResult(SAMPLE_COMMAND_OUTPUT + SAMPLE_COMMAND_OUTPUT)],
-    ["SQZ-marker result", () => okResult("[sqz] 1/2 tokens")],
-  ];
+    );
 
-  for (const [name, handler] of cases) {
-    test(name, async () => {
-      const { hooks } = await makeHooks(handler);
-      const metadata = { exitCode: 0, stdout: "raw" };
-      const output = { title: "git log", output: SAMPLE_COMMAND_OUTPUT, metadata };
-
-      await call(afterOf(hooks), "git log", output);
-
-      expect(output.output).toBe(SAMPLE_COMMAND_OUTPUT);
-      expect(output.title).toBe("git log");
-      expect(output.metadata).toBe(metadata);
-    });
-  }
-});
-
-describe("duplicate application guards", () => {
-  test("output already containing a SQZ marker is not compressed again", async () => {
-    const { hooks, mock } = await makeHooks(() => okResult(COMPRESSED));
-    const already = `[sqz] 27/181 tokens (85% reduction)\n${SAMPLE_COMMAND_OUTPUT}`;
-    const output = { title: "x", output: already, metadata: { exitCode: 0 } };
-
-    await call(afterOf(hooks), "git log", output);
-
-    expect(output.output).toBe(already);
+    expect(contentText(direct)).toEqual([SAMPLE_COMMAND_OUTPUT]);
+    expect(contentText(pipeline)).toEqual([SAMPLE_COMMAND_OUTPUT]);
     expect(mock.calls).toHaveLength(0);
   });
 
-  test("MCP sqz / non-shell tools are not touched", async () => {
-    const { hooks, mock } = await makeHooks(() => okResult(COMPRESSED));
-    const output = {
-      title: "sqz",
-      output: SAMPLE_COMMAND_OUTPUT,
-      metadata: { exitCode: 0 },
-    };
+  test("raw source, tiny, and cryptic outputs are skipped", async () => {
+    const mock = createMockSpawn(() => okResult(COMPRESSED));
+    const plugin = await setupPlugin({ spawn: mock.spawn });
+    const source = shellResult(SOURCE_FIXTURE);
+    const tiny = shellResult("ok");
+    const cryptic = shellResult(
+      Array.from(
+        { length: 12 },
+        (_, index) =>
+          `aaaaaaaa.bbbbbbbb.cccccccc.dddddddd.eeeeeeee${String(index).padStart(2, "0")}`,
+      ).join(" "),
+    );
 
-    await call(afterOf(hooks), "compress", output, { command: "compress" }, "sqz");
-    await call(afterOf(hooks), "read", output, { filePath: "x" }, "read");
+    await plugin.invoke(completedEvent(source, { id: "call_source" }));
+    await plugin.invoke(completedEvent(tiny, { id: "call_tiny" }));
+    await plugin.invoke(completedEvent(cryptic, { id: "call_cryptic" }));
 
+    expect(contentText(source)).toEqual([SOURCE_FIXTURE]);
+    expect(contentText(tiny)).toEqual(["ok"]);
     expect(mock.calls).toHaveLength(0);
-    expect(output.output).toBe(SAMPLE_COMMAND_OUTPUT);
-  });
-
-  test("a shell command that is sqz itself is skipped", async () => {
-    const { hooks, mock } = await makeHooks(() => okResult(COMPRESSED));
-    const output = {
-      title: "sqz",
-      output: SAMPLE_COMMAND_OUTPUT,
-      metadata: { exitCode: 0 },
-    };
-
-    await call(afterOf(hooks), "sqz compress --cmd git", output);
-
-    expect(mock.calls).toHaveLength(0);
-    expect(output.output).toBe(SAMPLE_COMMAND_OUTPUT);
-  });
-
-  test("raw source/config shell output is skipped", async () => {
-    const { hooks, mock } = await makeHooks(() => okResult(COMPRESSED));
-    const output = {
-      title: "cat src.ts",
-      output: 'import { x } from "y";\n\nexport const a = 1;\nexport const b = 2;\nexport const c = 3;\nexport const d = 4;\nexport const e = 5;\n',
-      metadata: { exitCode: 0 },
-    };
-
-    await call(afterOf(hooks), "cat src.ts", output);
-
-    expect(mock.calls).toHaveLength(0);
-    expect(output.output).toContain("import");
   });
 });
 
-describe("default plugin hook integration", () => {
+describe("real PATH compressor through the 2.x entrypoint", () => {
   test.skipIf(!sqzOnPath)(
-    "real PATH sqz compresses captured output and preserves nonzero metadata",
+    "compresses model-visible content and leaves exit metadata intact",
     async () => {
-      const hooks = await pluginModule.server({} as never);
-      const after = afterOf(hooks);
-      const metadata = {
-        exitCode: 1,
-        stdout: "raw stdout payload",
-        stderr: "raw stderr payload",
-      };
-      const args = { command: "git log --oneline" };
-      const output = {
-        title: "git log --oneline",
-        output: SAMPLE_COMMAND_OUTPUT,
-        metadata,
-      };
+      const plugin = await setupPlugin({});
+      const result = shellResult(SAMPLE_COMMAND_OUTPUT);
+      const structured = result.output;
+      const metadata = result.metadata;
 
-      await call(after, "git log --oneline", output, args);
+      await plugin.invoke(
+        completedEvent(result, { id: "call_real", command: "git log" }),
+      );
 
-      expect(output.output.length).toBeLessThan(SAMPLE_COMMAND_OUTPUT.length);
-      expect(output.output).not.toContain("[sqz]");
-      expect(output.output).not.toContain("§ref:");
-      expect(output.title).toBe("git log --oneline");
-      expect(output.metadata).toBe(metadata);
-      expect(output.metadata).toEqual({
-        exitCode: 1,
-        stdout: "raw stdout payload",
-        stderr: "raw stderr payload",
+      const text = contentText(result)[0]!;
+      expect(text.length).toBeLessThan(SAMPLE_COMMAND_OUTPUT.length);
+      expect(text).not.toContain("[sqz]");
+      expect(text).not.toContain("§ref:");
+      expect(result.output).toBe(structured);
+      expect(result.metadata).toBe(metadata);
+      expect(result.metadata).toEqual({
+        status: "completed",
+        truncated: false,
+        exit: 0,
+        shellID: "sh_1",
       });
-      expect(args).toEqual({ command: "git log --oneline" });
     },
   );
-
-  test.skipIf(!sqzOnPath)(
-    "real PATH sqz skips output that already carries a SQZ marker",
-    async () => {
-      const hooks = await pluginModule.server({} as never);
-      const after = afterOf(hooks);
-      const already = `[sqz] 27/181 tokens\n${SAMPLE_COMMAND_OUTPUT}`;
-      const output = { title: "x", output: already, metadata: { exitCode: 0 } };
-
-      await call(after, "git log", output);
-
-      expect(output.output).toBe(already);
-    },
-  );
-});
-
-describe("runtime failed tools", () => {
-  test("error metadata is preserved verbatim and never compressed", async () => {
-    const { hooks, mock } = await makeHooks(() => okResult(COMPRESSED));
-    const metadata = { isError: true, error: "boom", exitCode: 1 };
-    const output = { title: "failed", output: "boom", metadata };
-
-    await call(afterOf(hooks), "false", output);
-
-    expect(output.output).toBe("boom");
-    expect(output.metadata).toBe(metadata);
-    expect(output.metadata).toEqual({ isError: true, error: "boom", exitCode: 1 });
-    expect(mock.calls).toHaveLength(0);
-  });
-
-  test("non-string output is ignored", async () => {
-    const { hooks, mock } = await makeHooks(() => okResult(COMPRESSED));
-    const output = { title: "x", output: undefined as unknown as string, metadata: {} };
-
-    await call(afterOf(hooks), "git log", output);
-
-    expect(output.output).toBeUndefined();
-    expect(mock.calls).toHaveLength(0);
-  });
 });

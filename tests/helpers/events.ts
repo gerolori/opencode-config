@@ -1,42 +1,57 @@
-import type { Event, Session, ToolPart, ToolStateError } from "@opencode-ai/sdk";
+import type { Agent } from "@opencode/schema/agent";
+import type { Session } from "@opencode/schema/session";
+import type { SessionMessage } from "@opencode/schema/session-message";
+import type { Tool } from "@opencode/schema/tool";
 
-/** A tool part whose execution failed (`state.status === "error"`). */
-export type FailedToolPart = ToolPart & { state: ToolStateError };
+/** Per-call identity attached to every `tool.execute.before/after` event. */
+export interface ToolCallIdentity {
+  readonly tool: string;
+  readonly sessionID: Session.ID;
+  readonly agent: Agent.ID;
+  readonly messageID: SessionMessage.ID;
+  readonly id: Tool.CallID;
+}
 
-export type MessagePartUpdatedEvent = Extract<Event, { type: "message.part.updated" }>;
-
-export type FailedToolEvent = MessagePartUpdatedEvent & {
-  properties: { part: FailedToolPart };
+export type ExecuteBeforeEvent = ToolCallIdentity & {
+  input: unknown;
 };
 
-export function isFailedToolPart(part: ToolPart): part is FailedToolPart {
-  return part.type === "tool" && part.state.status === "error";
+export type ExecuteAfterEvent = ToolCallIdentity & {
+  readonly input: unknown;
+} & (
+  | { readonly status: "completed"; result: Tool.Result }
+  | { readonly status: "error"; error: Tool.Error }
+);
+
+export type ToolErrorOutcome = ToolCallIdentity & {
+  readonly input: unknown;
+  readonly status: "error";
+  error: Tool.Error;
+};
+
+export function isToolErrorOutcome(event: ExecuteAfterEvent): event is ToolErrorOutcome {
+  return event.status === "error";
 }
 
-/**
- * Failed tool calls have no dedicated event. Observe them through
- * `message.part.updated`; `part.state.status === "error"` carries
- * `state.error` (string), plus `tool`, `callID`, and `sessionID` on the part.
- */
-export function isFailedToolEvent(event: Event): event is FailedToolEvent {
-  if (event.type !== "message.part.updated") return false;
-  const part = event.properties.part;
-  return part.type === "tool" && part.state.status === "error";
+export function toolErrorOf(event: ExecuteAfterEvent): Tool.Error | undefined {
+  return event.status === "error" ? event.error : undefined;
 }
 
-export function failedToolError(part: FailedToolPart): string {
-  return part.state.error;
+export function callIdentity(event: ToolCallIdentity): ToolCallIdentity {
+  return {
+    tool: event.tool,
+    sessionID: event.sessionID,
+    agent: event.agent,
+    messageID: event.messageID,
+    id: event.id,
+  };
 }
 
-/**
- * Task/subagent sessions are child sessions: `Session.parentID` points at the
- * parent session. Arrives via `session.created` / `session.updated`
- * (`properties.info`) or via `client.session.get` / `client.session.children`.
- */
-export function sessionParentID(session: Session): string | undefined {
+/** Task/subagent sessions are child sessions with a `parentID`. */
+export function sessionParentID(session: Session.Info): string | undefined {
   return session.parentID;
 }
 
-export function isChildTaskSession(session: Session): boolean {
+export function isChildTaskSession(session: Session.Info): boolean {
   return typeof session.parentID === "string" && session.parentID.length > 0;
 }

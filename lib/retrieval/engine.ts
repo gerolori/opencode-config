@@ -37,9 +37,7 @@ import type {
   SessionBudget,
   SessionInfo,
   SessionLookup,
-  TinyFishProviderBridge,
   ToolClassification,
-  UsageSnapshot,
 } from "./types";
 
 export const INITIAL_SEARCH_BUDGET = 3;
@@ -53,7 +51,6 @@ export const TINYFISH_RATE_LIMITS = {
 } as const;
 
 const PENDING_TTL_MS = 15 * 60_000;
-const COMPLETED_TTL_MS = 5 * 60_000;
 const OUTCOME_MEMORY_LIMIT = 2_000;
 const LOOKUP_CACHE_MS = 60_000;
 export const RESETTABLE_PROVIDERS: ProviderId[] = [
@@ -78,6 +75,7 @@ export type RetrievalEngineOptions = {
   lockWaitMs?: number;
   lockStaleMs?: number;
   lockPollMs?: number;
+  nativeSearchAvailable?: boolean;
 };
 
 export type BeforeInput = { tool: string; sessionID: string; callID: string };
@@ -133,7 +131,6 @@ export type ControlStatus = {
     degraded_until?: number;
     reason?: string;
   };
-  usage?: UsageSnapshot;
   note: "counts_are_local_attempts_not_vendor_billing";
   blocked_attempts_consume_budget: true;
 };
@@ -151,7 +148,7 @@ export type ControlResult = {
  * Retrieval policy engine.
  *
  * The engine owns budgets, provider circuits, error classification, control
- * actions and metadata-only persistence. OpenCode-specific wiring lives in
+ * actions and metadata-only persistence. OpenCode 2.x wiring lives in
  * `plugins/retrieval-policy.ts`.
  */
 export class RetrievalEngine {
@@ -159,22 +156,26 @@ export class RetrievalEngine {
   private readonly store: StateStore;
   private readonly env: Record<string, string | undefined>;
   private readonly lookup?: SessionLookup;
+  private nativeSearchAvailable: boolean;
   private state = defaultState(0);
   private loaded?: Promise<void>;
   private persistenceFailed = false;
   private lastEventPersistError?: string;
+  private pendingGovernance?: {
+    providers: Record<string, ProviderState>;
+    blockedResources: Record<string, BlockedResource>;
+  };
   private readonly agents = new Map<string, string>();
   private readonly sessions = new Map<string, CachedSession>();
   private readonly pending = new Map<string, PendingCall>();
-  private readonly completed = new Map<string, { call: PendingCall; completedAt: number }>();
   private readonly callOutcomes = new Map<string, "success" | "failure">();
-  private readonly usage = new Map<string, UsageSnapshot>();
   private operationQueue: Promise<unknown> = Promise.resolve();
 
   constructor(options: RetrievalEngineOptions = {}) {
     this.now = options.now ?? Date.now;
     this.env = options.env ?? process.env;
     this.lookup = options.sessionLookup;
+    this.nativeSearchAvailable = options.nativeSearchAvailable ?? true;
     const dir = options.stateDir ?? resolveStateDir(this.env);
     this.store =
       options.store ??
@@ -241,8 +242,9 @@ export class RetrievalEngine {
 
   async before(input: BeforeInput, output: { args?: unknown }): Promise<PolicyDecision> {
     await this.init();
+    this.prunePending();
     const tool = normalizeToolName(input.tool);
-    if (tool === "task") return this.beforeTask(input);
+    if (tool === "task" || tool === "subagent") return this.beforeTask(input);
     const classification = classifyTool(input.tool);
     if (!classification) return { allowed: true, reason: "not_retrieval" };
     // Identity lookup may touch the SDK; never do that while holding the lock.
@@ -269,6 +271,7 @@ export class RetrievalEngine {
     metadata?: unknown;
   }): Promise<void> {
     await this.init();
+    this.prunePending();
     const classification = classifyTool(input.tool);
     if (!classification) return;
     const callKey = callKeyOf(input.sessionID, input.callID);
@@ -279,15 +282,13 @@ export class RetrievalEngine {
     try {
       await this.runTransaction(async () => {
         if (this.callOutcomes.has(callKey)) return;
-        const pending =
-          this.pending.get(callKey) ?? this.completed.get(callKey)?.call;
+        const pending = this.pending.get(callKey);
         this.pending.delete(callKey);
         const budget = this.getBudget(input.sessionID);
 
         if (!pending) {
           // No authorized pre-hook call: never invent success or clear circuits.
           this.rememberOutcome(callKey, "failure");
-          this.completed.delete(callKey);
           await this.appendEvent(
             this.makeEvent(
               input,
@@ -305,12 +306,16 @@ export class RetrievalEngine {
 
         const latencyMs = Math.max(0, now - pending.startedAt);
         if (errorInfo.isError) {
-          this.completed.delete(callKey);
           this.rememberOutcome(callKey, "failure");
-          const resourceOnly =
+          const resourceScoped =
             classification.kind === "read" &&
-            (errorInfo.category === "access_denied" || errorInfo.category === "captcha");
-          if (errorInfo.category && !resourceOnly) {
+            pending.urls.length > 0 &&
+            (errorInfo.category === "access_denied" ||
+              errorInfo.category === "captcha" ||
+              errorInfo.category === "unknown" ||
+              ((errorInfo.category === "auth" || errorInfo.category === "quota") &&
+                !providerScopedReadFailure(errorInfo, metadata)));
+          if (errorInfo.category && !resourceScoped) {
             await this.applyFailure(
               classification.provider,
               errorInfo.category,
@@ -320,8 +325,13 @@ export class RetrievalEngine {
               classification.external,
             );
           }
-          if (resourceOnly) {
-            this.blockResources(pending.urls, errorInfo.category as "access_denied" | "captcha", errorInfo.retryAfterMs, now);
+          if (resourceScoped) {
+            this.blockResources(
+              pending.urls,
+              errorInfo.category as BlockedResource["reason"],
+              errorInfo.retryAfterMs,
+              now,
+            );
           }
           if (errorInfo.category === "transient" && !pending.wasRetry) {
             this.setRetry(
@@ -366,7 +376,6 @@ export class RetrievalEngine {
           pending.query,
         );
         this.rememberOutcome(callKey, "success");
-        this.rememberCompleted(callKey, pending, now);
         await this.appendEvent(
           this.makeEvent(
             input,
@@ -376,150 +385,6 @@ export class RetrievalEngine {
             undefined,
             undefined,
             latencyMs,
-          ),
-        );
-        await this.persist();
-      });
-    } catch (error) {
-      this.markPersistenceFailure(error);
-    }
-  }
-
-  async handleEvent(event: unknown): Promise<void> {
-    await this.init();
-    if (!isRecord(event) || typeof event.type !== "string") return;
-    const properties = isRecord(event.properties) ? event.properties : {};
-
-    if (
-      event.type === "session.created" ||
-      event.type === "session.updated" ||
-      event.type === "session.deleted"
-    ) {
-      const info = properties.info;
-      if (isRecord(info) && typeof info.id === "string") {
-        if (event.type === "session.deleted") {
-          this.sessions.delete(info.id);
-          this.agents.delete(info.id);
-        } else {
-          this.noteSession({
-            id: info.id,
-            parentID: typeof info.parentID === "string" ? info.parentID : undefined,
-          });
-        }
-      }
-      return;
-    }
-
-    if (event.type === "message.updated") {
-      const info = properties.info;
-      if (isRecord(info) && info.role === "assistant" && typeof info.sessionID === "string") {
-        if (typeof info.mode === "string") this.noteAgent(info.sessionID, info.mode);
-        this.noteUsage(info.sessionID, info);
-      }
-      return;
-    }
-
-    if (event.type !== "message.part.updated") return;
-    const part = properties.part;
-    if (!isRecord(part) || part.type !== "tool") return;
-    if (!isRecord(part.state) || part.state.status !== "error") return;
-    const tool = typeof part.tool === "string" ? part.tool : "";
-    const sessionID = typeof part.sessionID === "string" ? part.sessionID : "";
-    const callID =
-      typeof part.callID === "string"
-        ? part.callID
-        : typeof part.id === "string"
-          ? part.id
-          : "";
-    if (!sessionID || !callID) return;
-    const classification = classifyTool(tool);
-    if (!classification) return;
-    const callKey = callKeyOf(sessionID, callID);
-    const now = this.now();
-    const errorText = typeof part.state.error === "string" ? part.state.error : "";
-    const errorMeta = isRecord(part.state.metadata) ? part.state.metadata : undefined;
-    const { category, retryAfterMs } = categorizeError(errorText, errorMeta, now);
-
-    try {
-      await this.runTransaction(async () => {
-        const prior = this.callOutcomes.get(callKey);
-        if (prior === "failure") return;
-        const pending =
-          this.pending.get(callKey) ?? this.completed.get(callKey)?.call;
-        this.pending.delete(callKey);
-        this.completed.delete(callKey);
-        const budget = this.getBudget(sessionID);
-
-        if (!pending) {
-          // A denied/never-authorized call must not poison provider circuits.
-          this.rememberOutcome(callKey, "failure");
-          await this.appendEvent(
-            this.makeEvent(
-              { tool, sessionID, callID },
-              classification,
-              budget,
-              "failure",
-              "unattributed_failure",
-              category,
-              undefined,
-            ),
-          );
-          await this.persist();
-          return;
-        }
-
-        if (prior === "success") {
-          // An actual error event wins over a completed-tool success.
-          const state = this.providerState(classification.provider);
-          if (state.successes > 0) state.successes -= 1;
-        }
-        this.rememberOutcome(callKey, "failure");
-        const latency = Math.max(0, now - pending.startedAt);
-        const resourceOnly =
-          classification.kind === "read" &&
-          (category === "access_denied" || category === "captcha");
-        if (!resourceOnly) {
-          await this.applyFailure(
-            classification.provider,
-            category,
-            retryAfterMs,
-            latency,
-            pending.wasRetry,
-            Boolean(classification.external),
-          );
-        } else {
-          this.blockResources(
-            pending.urls,
-            category as "access_denied" | "captcha",
-            retryAfterMs,
-            now,
-          );
-        }
-
-        if (category === "transient" && !pending.wasRetry) {
-          this.setRetry(
-            sessionID,
-            classification.provider,
-            classification.tool,
-            pending.query,
-            {
-              provider: classification.provider,
-              category,
-              retried: false,
-              at: now,
-            },
-          );
-        }
-
-        await this.appendEvent(
-          this.makeEvent(
-            { tool, sessionID, callID },
-            classification,
-            budget,
-            "failure",
-            resourceOnly ? "resource_blocked" : undefined,
-            category,
-            latency,
           ),
         );
         await this.persist();
@@ -689,7 +554,10 @@ export class RetrievalEngine {
     if (provider === "builtin_websearch") {
       return { ...base, reason: "unknown_builtin_search_backend", cost: "unknown_maybe_paid" };
     }
-    if ((provider === "exa" || provider === "tinyfish") && !keyConfigured) {
+    if (provider === "tinyfish" && !this.nativeSearchAvailable) {
+      return { ...base, reason: "native_search_provider_unavailable" };
+    }
+    if (provider === "exa" && !keyConfigured) {
       return { ...base, reason: "missing_api_key" };
     }
     if (pstate.requiresOperator) {
@@ -722,38 +590,27 @@ export class RetrievalEngine {
     return { ...base, available: true };
   }
 
-  tinyfishBridge(): TinyFishProviderBridge {
-    return {
-      availability: () => this.providerAvailability("tinyfish"),
-      consumeCall: async () => {
-        try {
-          return await this.runTransaction(() => this.consumeTinyFishCall());
-        } catch (error) {
-          this.markPersistenceFailure(error);
-          return {
-            allowed: false,
-            reason: "persistence" as const,
-            remaining: { minute: 0, hour: 0, day: 0 },
-          };
-        }
-      },
-      recordFailure: async (category, retryAfterMs, latencyMs) => {
-        try {
-          await this.runTransaction(() =>
-            this.applyFailure("tinyfish", category, retryAfterMs, latencyMs, false, true),
-          );
-        } catch (error) {
-          this.markPersistenceFailure(error);
-        }
-      },
-      recordSuccess: async (latencyMs) => {
-        try {
-          await this.runTransaction(() => this.applySuccess("tinyfish", latencyMs));
-        } catch (error) {
-          this.markPersistenceFailure(error);
-        }
-      },
-    };
+  setNativeSearchAvailable(available: boolean): void {
+    this.nativeSearchAvailable = available;
+  }
+
+  /** Forget an ended/interrupted invocation without refunding its budget. */
+  abandonCall(sessionID: string, callID: string): void {
+    this.prunePending();
+    this.pending.delete(callKeyOf(sessionID, callID));
+  }
+
+  async consumeNativeSearchCall(): Promise<RateLimitResult> {
+    try {
+      return await this.runTransaction(() => this.consumeTinyFishCall());
+    } catch (error) {
+      this.markPersistenceFailure(error);
+      return {
+        allowed: false,
+        reason: "persistence" as const,
+        remaining: { minute: 0, hour: 0, day: 0 },
+      };
+    }
   }
 
   private async beforeTask(input: BeforeInput): Promise<PolicyDecision> {
@@ -853,10 +710,13 @@ export class RetrievalEngine {
           return query ? [query] : [];
         })();
     const urls = isRead ? (readPlan?.urls ?? []) : [];
-    const units = isRead ? Math.max(1, readPlan?.requested ?? 1) : 1;
+    const requestedUnits = isRead ? Math.max(1, readPlan?.requested ?? 1) : 1;
+    const invalidReadBatch =
+      isRead && (Boolean(readPlan?.opaque) || requestedUnits > MAX_READS_PER_CALL);
+    const chargedUnits = invalidReadBatch ? 1 : requestedUnits;
     const retryToken = keys.length > 0 ? keys.join("|") : undefined;
     const counter = isRead ? "readUsed" : "searchUsed";
-    budget[counter] += units;
+    budget[counter] += chargedUnits;
     budget.updatedAt = now;
 
     const deny = async (
@@ -865,8 +725,8 @@ export class RetrievalEngine {
       options: { countBlocked?: boolean; next?: ProviderId[] } = {},
     ): Promise<PolicyDecision> => {
       if (options.countBlocked !== false) {
-        if (isRead) budget.blockedRead += units;
-        else budget.blockedSearch += units;
+        if (isRead) budget.blockedRead += chargedUnits;
+        else budget.blockedSearch += chargedUnits;
       }
       budget.updatedAt = now;
       await this.appendEvent(
@@ -883,6 +743,8 @@ export class RetrievalEngine {
         reason === "agent_unknown" ||
         reason === "agent_denied" ||
         reason === "unknown_builtin_search_backend" ||
+        reason === "native_search_provider_override" ||
+        reason === "native_search_provider_unavailable" ||
         reason === "paid_or_unbounded_tool" ||
         reason === "unclassified_retrieval_tool";
       return {
@@ -924,6 +786,23 @@ export class RetrievalEngine {
       );
     }
 
+    if (classification.tool === "websearch") {
+      const args = isRecord(output.args) ? output.args : {};
+      const override =
+        typeof args.providerID === "string"
+          ? args.providerID
+          : typeof args.provider === "string"
+            ? args.provider
+            : undefined;
+      if (override !== undefined && override !== "tinyfish") {
+        return deny(
+          "native_search_provider_override",
+          "native websearch is bound to the confirmed tinyfish provider",
+          { next: [] },
+        );
+      }
+    }
+
     if (isRead) {
       if (readPlan?.opaque) {
         return deny(
@@ -931,7 +810,7 @@ export class RetrievalEngine {
           "opaque expansion tokens cannot be checked against blocked resources; supply a concrete URL",
         );
       }
-      if (units > MAX_READS_PER_CALL) {
+      if (requestedUnits > MAX_READS_PER_CALL) {
         return deny(
           "batch_too_large",
           `at most ${MAX_READS_PER_CALL} reads are allowed per call`,
@@ -956,13 +835,11 @@ export class RetrievalEngine {
     }
 
     const availability = this.providerAvailability(classification.provider, now);
-    const typedUnavailableCustomTool =
-      classification.tool === "tinyfish_search" &&
-      availability.reason === "missing_api_key";
-    if (!availability.available && !typedUnavailableCustomTool) {
+    if (!availability.available) {
       return deny(
         availability.reason ?? "provider_unavailable",
         providerDenyMessage(classification.provider, availability),
+        classification.tool === "websearch" ? { next: [] } : {},
       );
     }
 
@@ -993,6 +870,20 @@ export class RetrievalEngine {
         );
       }
     }
+
+    if (classification.tool === "websearch") {
+      const limited = await this.consumeTinyFishCall();
+      if (!limited.allowed) {
+        return deny(
+          limited.reason === "persistence" ? "persistence_degraded" : "provider_unavailable",
+          limited.reason === "persistence"
+            ? "native search rate counters could not be persisted"
+            : "local TinyFish call cap reached",
+          { next: [] },
+        );
+      }
+    }
+
     for (const key of keys) {
       this.addProvider(input.sessionID, hashKey(key), classification.provider, now);
     }
@@ -1058,18 +949,15 @@ export class RetrievalEngine {
       pstate.cooldownUntil = undefined;
       pstate.requiresOperator = false;
     }
-    await this.persist();
-  }
-
-  private async applySuccess(provider: ProviderId, latencyMs?: number): Promise<void> {
-    const now = this.now();
-    const pstate = this.providerState(provider);
-    pstate.successes += 1;
-    pstate.consecutiveFailures = 0;
-    pstate.lastSuccessAt = now;
-    pstate.cooldownUntil = undefined;
-    pstate.requiresOperator = false;
-    if (latencyMs !== undefined) pstate.lastLatencyMs = latencyMs;
+    // A configured native TinyFish credential that fails auth must not silently
+    // downgrade into an anonymous retry after a provider-supplied expiry.
+    if (
+      provider === "tinyfish" &&
+      category === "auth" &&
+      Boolean(this.env.TINYFISH_API_KEY?.trim())
+    ) {
+      pstate.requiresOperator = true;
+    }
     await this.persist();
   }
 
@@ -1242,7 +1130,6 @@ export class RetrievalEngine {
         degraded_until: this.state.health.degradedUntil,
         reason: this.state.health.reason,
       },
-      usage: this.usage.get(sessionID),
       note: "counts_are_local_attempts_not_vendor_billing",
       blocked_attempts_consume_budget: true,
     };
@@ -1363,7 +1250,7 @@ export class RetrievalEngine {
 
   private blockResource(
     query: string,
-    reason: "access_denied" | "captcha",
+    reason: BlockedResource["reason"],
     retryAfterMs: number | undefined,
     now: number,
   ): void {
@@ -1378,7 +1265,7 @@ export class RetrievalEngine {
 
   private blockResources(
     urls: string[],
-    reason: "access_denied" | "captcha",
+    reason: BlockedResource["reason"],
     retryAfterMs: number | undefined,
     now: number,
   ): void {
@@ -1492,6 +1379,7 @@ export class RetrievalEngine {
     try {
       await this.store.saveDirect(this.state);
       this.persistenceFailed = false;
+      this.pendingGovernance = undefined;
       this.state.health.persistenceFailed = false;
       this.state.health.lastError = undefined;
       if (this.state.health.reason === "persistence_failed") {
@@ -1499,6 +1387,7 @@ export class RetrievalEngine {
       }
       return true;
     } catch (error) {
+      this.rememberUnpersistedGovernance();
       this.markPersistenceFailure(error);
       return false;
     }
@@ -1511,17 +1400,47 @@ export class RetrievalEngine {
     this.state.health.reason = "persistence_failed";
   }
 
+  private rememberUnpersistedGovernance(): void {
+    const providers = cloneRecord(this.state.providers);
+    const blockedResources = cloneRecord(this.state.blockedResources ?? {});
+    if (!this.pendingGovernance) {
+      this.pendingGovernance = { providers, blockedResources };
+      return;
+    }
+    mergeProviders(this.pendingGovernance.providers, providers);
+    mergeBlockedResources(this.pendingGovernance.blockedResources, blockedResources);
+  }
+
+  private applyUnpersistedGovernance(): void {
+    if (!this.pendingGovernance) return;
+    this.state.providers ??= {};
+    mergeProviders(this.state.providers, this.pendingGovernance.providers);
+    this.state.blockedResources ??= {};
+    mergeBlockedResources(this.state.blockedResources, this.pendingGovernance.blockedResources);
+  }
+
   private async runTransaction<T>(
     fn: () => Promise<T>,
     options: { write?: boolean } = {},
   ): Promise<T> {
-    const run = this.operationQueue.then(async () =>
-      this.store.transaction(async (fresh) => {
+    const run = this.operationQueue.then(async () => {
+      const result = await this.store.transaction(async (fresh) => {
         this.state = fresh;
+        this.applyUnpersistedGovernance();
         await this.clearExpiredDegradation();
         return fn();
-      }, options),
-    );
+      }, options);
+      if (options.write !== false) {
+        this.pendingGovernance = undefined;
+        this.persistenceFailed = false;
+        this.state.health.persistenceFailed = false;
+        this.state.health.lastError = undefined;
+        if (this.state.health.reason === "persistence_failed") {
+          this.state.health.reason = undefined;
+        }
+      }
+      return result;
+    });
     this.operationQueue = run.then(
       () => undefined,
       () => undefined,
@@ -1546,56 +1465,20 @@ export class RetrievalEngine {
     }
   }
 
-  private rememberCompleted(key: string, call: PendingCall, now: number): void {
-    this.completed.set(key, { call, completedAt: now });
-    if (this.completed.size <= OUTCOME_MEMORY_LIMIT) {
-      for (const [entryKey, entry] of this.completed) {
-        if (now - entry.completedAt > COMPLETED_TTL_MS) this.completed.delete(entryKey);
-      }
-      return;
-    }
-    for (const [entryKey, entry] of this.completed) {
-      if (now - entry.completedAt > COMPLETED_TTL_MS || this.completed.size > OUTCOME_MEMORY_LIMIT) {
-        this.completed.delete(entryKey);
-      }
-      if (this.completed.size <= OUTCOME_MEMORY_LIMIT) break;
-    }
-  }
-
   private rememberOutcome(key: string, outcome: "success" | "failure"): void {
     this.callOutcomes.set(key, outcome);
     if (this.callOutcomes.size > OUTCOME_MEMORY_LIMIT) {
       const oldest = this.callOutcomes.keys().next().value;
       if (typeof oldest === "string") this.callOutcomes.delete(oldest);
     }
-    // Bound pending calls as well.
-    if (this.pending.size > OUTCOME_MEMORY_LIMIT) {
-      const now = this.now();
-      for (const [pendingKey, value] of this.pending) {
-        if (now - value.startedAt > PENDING_TTL_MS) this.pending.delete(pendingKey);
-        if (this.pending.size <= OUTCOME_MEMORY_LIMIT) break;
-      }
-    }
+    // Bound pending calls as well; TTL cleanup must not depend on map size.
+    this.prunePending();
   }
 
-  private noteUsage(sessionID: string, info: Record<string, unknown>): void {
-    const tokens = isRecord(info.tokens) ? info.tokens : undefined;
-    const cache = tokens && isRecord(tokens.cache) ? tokens.cache : undefined;
-    const snapshot: UsageSnapshot = {
-      label: "runtime_estimated_not_vendor_billing",
-      updatedAt: this.now(),
-    };
-    if (tokens) {
-      snapshot.inputTokens = numberOrUndefined(tokens.input);
-      snapshot.outputTokens = numberOrUndefined(tokens.output);
-      snapshot.reasoningTokens = numberOrUndefined(tokens.reasoning);
+  private prunePending(now = this.now()): void {
+    for (const [pendingKey, value] of this.pending) {
+      if (now - value.startedAt > PENDING_TTL_MS) this.pending.delete(pendingKey);
     }
-    if (cache) {
-      snapshot.cacheReadTokens = numberOrUndefined(cache.read);
-      snapshot.cacheWriteTokens = numberOrUndefined(cache.write);
-    }
-    snapshot.cost = numberOrUndefined(info.cost);
-    this.usage.set(sessionID, snapshot);
   }
 
   private async resolveAgent(sessionID: string): Promise<string | undefined> {
@@ -1657,6 +1540,9 @@ function providerDenyMessage(
   if (availability.reason === "unknown_builtin_search_backend") {
     return "built-in websearch has an unknown/paid/unbounded backend";
   }
+  if (availability.reason === "native_search_provider_unavailable") {
+    return "native websearch is not bound to an available tinyfish provider";
+  }
   return `provider '${provider}' is temporarily unavailable`;
 }
 
@@ -1664,10 +1550,6 @@ function finiteInt(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? Math.floor(value)
     : 0;
-}
-
-function numberOrUndefined(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, any> {
@@ -1680,6 +1562,7 @@ type MetadataErrorInfo = {
   code?: string;
   category?: ErrorCategory;
   retryAfterMs?: number;
+  text?: string;
 };
 
 /**
@@ -1687,6 +1570,84 @@ type MetadataErrorInfo = {
  * only for success, but a completed/error metadata shape still must never be
  * counted as success or clear an auth/circuit block.
  */
+function cloneRecord<T>(value: Record<string, T> | undefined): Record<string, T> {
+  const out: Record<string, T> = {};
+  for (const [key, entry] of Object.entries(value ?? {})) {
+    if (entry === undefined) continue;
+    out[key] = JSON.parse(JSON.stringify(entry)) as T;
+  }
+  return out;
+}
+
+function mergeProviders(
+  target: Record<string, ProviderState>,
+  source: Record<string, ProviderState>,
+): void {
+  for (const [provider, incoming] of Object.entries(source)) {
+    const current = target[provider] ?? defaultProviderState();
+    current.attempts = Math.max(current.attempts, incoming.attempts);
+    current.successes = Math.max(current.successes, incoming.successes);
+    current.failures = Math.max(current.failures, incoming.failures);
+    current.consecutiveFailures = Math.max(
+      current.consecutiveFailures,
+      incoming.consecutiveFailures,
+    );
+    current.lastAttemptAt = maxOptional(current.lastAttemptAt, incoming.lastAttemptAt);
+    current.lastSuccessAt = maxOptional(current.lastSuccessAt, incoming.lastSuccessAt);
+    if (incoming.lastLatencyMs !== undefined) current.lastLatencyMs = incoming.lastLatencyMs;
+    if (incoming.cooldownUntil !== undefined) {
+      current.cooldownUntil = Math.max(current.cooldownUntil ?? 0, incoming.cooldownUntil);
+    }
+    if (incoming.requiresOperator) current.requiresOperator = true;
+    if (
+      incoming.lastErrorCategory !== undefined &&
+      (incoming.cooldownUntil ?? 0) >= (current.cooldownUntil ?? 0)
+    ) {
+      current.lastErrorCategory = incoming.lastErrorCategory;
+    }
+    if (incoming.rate) current.rate = mergeRate(current.rate, incoming.rate);
+    target[provider] = current;
+  }
+}
+
+function mergeRate(
+  current: ProviderRateState | undefined,
+  incoming: ProviderRateState,
+): ProviderRateState {
+  const out: ProviderRateState = {
+    minute: { ...(current?.minute ?? { windowStart: 0, count: 0 }) },
+    hour: { ...(current?.hour ?? { windowStart: 0, count: 0 }) },
+    day: { ...(current?.day ?? { windowStart: 0, count: 0 }) },
+  };
+  for (const key of ["minute", "hour", "day"] as const) {
+    const source = incoming[key];
+    if (source.windowStart > out[key].windowStart) {
+      out[key] = { ...source };
+    } else if (source.windowStart === out[key].windowStart) {
+      out[key].count = Math.max(out[key].count, source.count);
+    }
+  }
+  return out;
+}
+
+function mergeBlockedResources(
+  target: Record<string, BlockedResource>,
+  source: Record<string, BlockedResource>,
+): void {
+  for (const [key, incoming] of Object.entries(source)) {
+    const current = target[key];
+    if (!current || incoming.until > current.until) {
+      target[key] = { ...incoming };
+    }
+  }
+}
+
+function maxOptional(a: number | undefined, b: number | undefined): number | undefined {
+  if (a === undefined) return b;
+  if (b === undefined) return a;
+  return Math.max(a, b);
+}
+
 function metadataError(metadata: Record<string, any>, now: number): MetadataErrorInfo {
   const structuredUnavailable =
     metadata.retrieval_outcome === "unavailable" ||
@@ -1724,14 +1685,6 @@ function metadataError(metadata: Record<string, any>, now: number): MetadataErro
     typeof metadata.retry_after_ms === "number" && Number.isFinite(metadata.retry_after_ms)
       ? Math.max(0, metadata.retry_after_ms)
       : undefined;
-
-  if (category) {
-    return { isError: true, structuredUnavailable, code, category, retryAfterMs };
-  }
-  if (structuredUnavailable) {
-    return { isError: true, structuredUnavailable, code, retryAfterMs };
-  }
-
   const text =
     typeof metadata.error === "string"
       ? metadata.error
@@ -1742,6 +1695,14 @@ function metadataError(metadata: Record<string, any>, now: number): MetadataErro
           : typeof metadata.message === "string"
             ? metadata.message
             : "unknown tool error";
+
+  if (category) {
+    return { isError: true, structuredUnavailable, code, category, retryAfterMs, text };
+  }
+  if (structuredUnavailable) {
+    return { isError: true, structuredUnavailable, code, retryAfterMs, text };
+  }
+
   const classified = categorizeError(text, metadata, now);
   return {
     isError: true,
@@ -1749,7 +1710,32 @@ function metadataError(metadata: Record<string, any>, now: number): MetadataErro
     code,
     category: classified.category,
     retryAfterMs: retryAfterMs ?? classified.retryAfterMs,
+    text,
   };
+}
+
+function providerScopedReadFailure(
+  info: MetadataErrorInfo,
+  metadata: Record<string, any>,
+): boolean {
+  const text = info.text ?? "";
+  const providerMarked =
+    typeof metadata.provider === "string" ||
+    typeof metadata.providerID === "string" ||
+    typeof metadata.server === "string" ||
+    typeof metadata.mcpServer === "string";
+  if (info.category === "auth") {
+    return (
+      providerMarked ||
+      /invalid (?:api[-\s]?)?key|missing (?:api[-\s]?)?key|authentication failed|not authenticated|token (?:expired|invalid)|invalid token|credential/i.test(
+        text,
+      )
+    );
+  }
+  if (info.category === "quota") {
+    return providerMarked || /\bprovider\b/i.test(text);
+  }
+  return false;
 }
 
 function isErrorCategory(value: unknown): value is ErrorCategory {

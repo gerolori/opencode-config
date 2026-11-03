@@ -2,6 +2,9 @@
 
 This file is the always-loaded index for `~/.config/opencode`. It is intentionally small.
 Open only the files relevant to the current task; never glob `memory/` or preload the whole cache.
+Runtime is OpenCode 2.2.5. Loader/config activation is complete; real model-turn/tool/
+Code Mode smoke and the manual OpenAI/Exa/TinyFish/Composio checks remain pending. See
+`README.md` and `docs/`.
 
 ## Start here
 
@@ -80,8 +83,8 @@ otherwise.
 ## Operating constraints (short form)
 
 - One delegation level: build/plan -> code, review, explore, fetch, track, composio. No `research`.
-- Only `fetch` performs external retrieval. `track` handles Beads `br`/`bv`.
-- Do not copy `auth.json` between hosts, and never paste API keys into commands or files.
+- Only `fetch` performs external retrieval; native TinyFish is policy-selected. `track` handles Beads `br`/`bv`.
+- Do not copy `auth.json` or service credentials between hosts, and never paste API keys into commands or files.
 - Missing keys must not block offline work; report the exact manual command instead.
 - Do not commit private memory or secrets. Only templates and protocol docs are tracked.
 - Detailed rules win over this summary.

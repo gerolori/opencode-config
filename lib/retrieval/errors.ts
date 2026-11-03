@@ -99,7 +99,8 @@ function retryAfterFromText(text: string): number | undefined {
 }
 
 /**
- * Classify a failed tool outcome from `message.part.updated` state.error.
+ * Classify a failed tool outcome from a 2.x Tool.Error message or structured
+ * after-hook failure metadata.
  * This function is only called for actual error parts, never for page text.
  */
 export function categorizeError(

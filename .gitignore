@@ -8,6 +8,8 @@ antigravity-logs/
 # private/runtime overlays and secrets
 notification-ntfy.json
 opencode.private.local.json
+/service.json
+/service.jsonc
 auth.json
 .env
 .env.*

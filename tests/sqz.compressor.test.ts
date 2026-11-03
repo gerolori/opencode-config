@@ -300,4 +300,20 @@ describe("defaultSpawn real process factory", () => {
       expect(combined.toLowerCase()).not.toContain("cannot be loaded because");
     },
   );
+
+  test.skipIf(!sqzOnPath)(
+    "real PATH sqz compresses sample output through maybeCompress",
+    async () => {
+      const compressed = await maybeCompress(SAMPLE_COMMAND_OUTPUT, {
+        spawn: defaultSpawn,
+        label: "build",
+        timeoutMs: 10_000,
+      });
+
+      expect(compressed).toBeDefined();
+      expect(compressed!.length).toBeLessThan(SAMPLE_COMMAND_OUTPUT.length);
+      expect(compressed).not.toContain("[sqz]");
+      expect(compressed).not.toContain("§ref:");
+    },
+  );
 });

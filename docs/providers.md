@@ -1,89 +1,128 @@
 # Providers and authentication
 
-## Interactive ChatGPT orchestration
+## Strong main
 
-The intended strong-orchestrator flow in the TUI:
+The strong primary stays on the configured OpenRouter custom-key route:
 
 ```text
-/connect -> OpenAI -> ChatGPT Plus/Pro -> browser
+provider: openrouter
+model:    gpt-6-luna
+wire id:  openai/gpt-6-luna
+variant:  high reasoning
 ```
 
-After authentication:
+Loader/config activation is complete. The actual upstream wire provider, routing,
+entitlement, cost, and billing are **not verified** until a real request is made. Do not
+present the configured model name as a measured provider or billing fact.
 
-1. Use `/models` and read the exact available native OpenAI catalog.
-2. Do not guess or invent a model ID.
-3. Test entitlement on one model the user actually has, then choose the main
-   orchestrator model.
+`build` and `plan` are the only user-selectable primaries; `general` is absent.
 
-Caveats:
+## Native OpenAI handoff
 
-- A catalog entry is not an entitlement test. Only a real call proves access.
-- Until the browser flow succeeds, the API path remains the default.
-- The browser flow and `/models` behavior are TUI features; confirm them in the
-  running 1.19.5 client rather than assuming older behavior.
+Native OpenAI/ChatGPT subscription access is a manual, unverified user step. Use only
+the verified 2.2.5 CLI forms:
+
+```text
+opencode auth login [<target>]
+opencode models
+opencode auth list [--format default|json]
+opencode auth switch [<target>] [<credential>]
+```
+
+`<target>` is optional. Do not guess a provider argument or reuse a 1.x form.
+
+1. Run `opencode auth login` and choose the OpenAI integration from the picker.
+2. Complete the browser flow.
+3. Read the exact catalog with `opencode models`.
+4. Do not guess or invent a model id.
+5. Make one real entitlement call on a candidate model.
+6. Only after success, make an approved manual config change that persists that exact
+   id.
+
+Rules:
+
+- A catalog entry is not proof of entitlement; only a real call proves access.
+- Do not claim a subscription was verified before the user completes this flow.
+- Do not fabricate a subscription model id or promise automatic fallback.
+- Until the handoff succeeds, the strong main remains on the OpenRouter route above.
+- An already-open session keeps its old toolset until reopened/attached through a new
+  2.2.5 client.
 
 ## Worker models
 
-Worker agents stay on OpenRouter. They are explicitly pinned in `opencode.jsonc`:
+The six workers (`code`, `review`, `explore`, `fetch`, `track`, `composio`) are pinned
+to cheap low-reasoning models. Their pins are independent of the primary. Changing the
+main model does not move them.
 
-- `code`, `review`, `composio`: `openrouter/deepseek-v4.1-flash-1017` (low reasoning).
-- `explore`, `fetch`, `track`: `openrouter/deepseek-v4.1-flash` (low reasoning).
+Do not change a pinned child model on resume unless the actual 2.x behavior is
+explicitly verified. `small_model` is unsupported in native config and removed.
 
-The pins describe intended weights and low reasoning options. Actual upstream
-provider selection, caching behavior, and cost are not validated until a call is made.
-Do not present configured names as measured wire-provider or billing facts.
+## Native provider catalog and TinyFish
 
-## API fallback
+The native catalog still lists `exa`, `firecrawl`, `parallel`, `tavily`, and `tinyfish`.
+It is not restricted or reduced by this config.
 
-A manual API-key path exists for OpenAI. Rules:
+- The public promise adapter exposes only `add` and `default`, not `list` or `remove`.
+- The plugin discovers TinyFish through `websearch.providers` and pins the supported
+  default with `default.set('tinyfish')`.
+- Other native providers are not removed.
+- The native builtin tool accepts only `query`; explicit overrides are denied.
+- A wrong-provider result or error disables native search without poisoning TinyFish.
+- A real `fromPromise` adapter test exists.
 
-- Do not maintain duplicate credentials for the same provider.
-- Do not promise automatic failover between ChatGPT auth and the API key.
-- Never copy `auth.json` between hosts.
-- If a key is used, enter it with the masked flow in `docs/setup.md`.
+TinyFish:
+
+- The custom TinyFish HTTP adapter was removed.
+- Optional `TINYFISH_API_KEY`; keyless is supported under local safeguards.
+- No vendor keyless allowance and no live success has been verified.
+- Local protective counters: 30/minute, 500/hour, 12,000/day. These are guards, not a
+  quota promise.
+- Key page: `https://agent.tinyfish.ai/api-keys`.
 
 ## Exa
 
-- Base MCP entry: disabled, `oauth: false`, header
-  `x-api-key: {env:EXA_API_KEY}`.
-- The retrieval plugin enables it only when `EXA_API_KEY` is non-empty.
+- Keyed native Exa MCP only, and only with `EXA_API_KEY`.
+- The Exa MCP entry is currently absent because the environment prerequisite is not met.
 - Key page: `https://dashboard.exa.ai/api-keys`.
-- Free plan: recurring credit, no card, no automatic recharge.
-- Do not claim that free arrangement is guaranteed if the user supplies a paid key;
-  that account's terms and billing apply.
-- Exa retrieval tools are classified `free_tier_then_paid`. Paid/unbounded Exa
-  products are denied by policy.
+- Free plan: recurring credit, no card, auto-recharge off.
+- Do not claim the free arrangement is guaranteed for a paid key; that account's
+  billing applies.
+- Paid or unbounded Exa products are denied by retrieval policy.
 
-## TinyFish
+## Composio
 
-- Not a native MCP server in OpenCode 1.19.5.
-- The only integration is the custom `tinyfish_search` tool.
-- Key: `TINYFISH_API_KEY` from `https://agent.tinyfish.ai/api-keys`.
-- Direct endpoint: `GET https://api.search.tinyfish.ai`.
-- Free-only local caps: 30/minute, 500/hour, 12,000/day.
-- Snippets only. No TinyFish Agent, Browser, MCP, or wallet usage.
-- Re-check quotas and plan terms with the vendor; they can change.
+- Connected MCPs at activation: `context7`, `DuckDuckGo`, `gh_grep`, `Semble`, `SQZ`.
+- eBay is disabled.
+- Composio **needs authentication** under 2.2.5. Old OAuth is not claimed migrated or
+  connected.
+- Manual command: `opencode mcp auth [<name>]` with the optional name; choose Composio.
+
+## API fallback and credentials
+
+- Do not promise automatic failover between native OpenAI subscription access and any
+  API-key path.
+- Do not maintain duplicate credentials for the same provider.
+- Never copy `auth.json`, `service.json`, `service.jsonc`, or other auth/service
+  credential files between hosts.
+- Enter keys with the masked flow in `docs/setup.md`. Keys and host variables must reach
+  the background service's launch environment; reopening only the TUI does not update the
+  running service. Apply them with an idle `opencode service restart` from the configured
+  shell. A config-only activation uses the verified `opencode reload` instead.
+- No automatic signups or payments are performed by this setup.
+- `cli.json` is deliberately tracked public UI configuration; `service.json` /
+  `service.jsonc` are ignored and unprinted.
 
 ## What must not be claimed
 
-- That a subscription was verified when it was not.
+- That a subscription or entitlement was verified when it was not.
 - That a paid key or plan exists when it was not observed.
-- That a configured model maps to a specific upstream provider without a call.
-- That aggregate quality or cost figures apply per task. Any aggregate (for example
-  85.1%) is aggregate.
-- That a tool attempt equals a vendor-billed request. Local counts are attempts.
+- That a configured model maps to a specific upstream provider without a real call.
+- That `opencode stats` is vendor billing.
+- That local TinyFish caps guarantee available vendor quota.
+- That the old Composio OAuth migrated or is connected.
+- That Exa or Home Assistant is connected while its env prerequisites are missing.
 
 ## Comparing models
 
-Do not run a benchmark campaign. Compare the next normal tasks instead, using:
-
-- runtime
-- cache hits
-- fresh tokens
-- reasoning effort
-- cost
-- retries
-- success
-
-One real task is better evidence than a synthetic sweep, and only calls can validate
-provider routing or billing.
+Do not run a benchmark campaign. Compare normal tasks using runtime, cache behavior,
+reasoning, cost, retries, and success. Only real calls can validate routing or billing.

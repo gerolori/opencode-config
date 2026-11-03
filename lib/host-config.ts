@@ -1,21 +1,26 @@
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { MCPDomain, MCPEditor } from "@opencode/plugin/promise/mcp";
+import type { Registration } from "@opencode/plugin/promise/registration";
 
-export const DEFAULT_HOME_ASSISTANT_URL = "https://homeassistant.gerosalorenzo.com/api/mcp";
+const EXA_URL = "https://mcp.exa.ai/mcp";
 
-export type HostMcpConfig = {
-  type?: string;
+export type HostMcpServer = {
+  type?: "local" | "remote";
   command?: string[];
-  enabled?: boolean;
-  url?: string;
-  oauth?: boolean | Record<string, unknown>;
-  headers?: Record<string, string>;
   environment?: Record<string, string>;
+  disabled?: boolean;
+  codemode?: boolean;
+  url?: string;
+  headers?: Record<string, string>;
+  oauth?: false | Record<string, unknown>;
 };
 
 export type HostConfig = {
-  mcp?: Record<string, HostMcpConfig | undefined>;
+  mcp?: {
+    servers?: Record<string, HostMcpServer | undefined>;
+  };
 };
 
 export type HostConfigOptions = {
@@ -27,11 +32,20 @@ export type HostConfigOptions = {
 };
 
 export type HostConfigSummary = {
+  added: string[];
   sqzCommand: string[];
-  sembleEnabled: boolean;
-  sembleCommand: string[];
-  homeAssistantEnabled: boolean;
-  exaEnabled: boolean;
+};
+
+export type HostConfigContext = {
+  mcp: Pick<MCPDomain, "transform">;
+};
+
+type ResolvedOptions = {
+  platform: NodeJS.Platform;
+  env: Record<string, string | undefined>;
+  home: string;
+  isDirectory: (path: string) => boolean;
+  hasFile: (path: string) => boolean;
 };
 
 function defaultIsDirectory(path: string): boolean {
@@ -48,6 +62,16 @@ function defaultHasFile(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+function resolveOptions(options: HostConfigOptions): ResolvedOptions {
+  return {
+    platform: options.platform ?? process.platform,
+    env: options.env ?? process.env,
+    home: options.homedir ?? homedir(),
+    isDirectory: options.isDirectory ?? defaultIsDirectory,
+    hasFile: options.hasFile ?? defaultHasFile,
+  };
 }
 
 function isLocalAbsolute(value: string, platform: NodeJS.Platform): boolean {
@@ -70,15 +94,8 @@ function isLocalDirectory(
   return isDirectory(value);
 }
 
-function isStandardSembleCommand(command: string[] | undefined, envDir: string): boolean {
-  if (!command || command.length !== 5) return false;
-  return (
-    command[0] === "uv" &&
-    command[1] === "--directory" &&
-    command[3] === "run" &&
-    command[4] === "semble" &&
-    (command[2] === "{env:SEMBLE_MCP_DIR}" || command[2] === envDir || command[2] === "")
-  );
+function isStandardSqzCommand(command: string[] | undefined): boolean {
+  return Array.isArray(command) && command.length === 1 && command[0] === "sqz-mcp";
 }
 
 function isDisabled(value: string | undefined): boolean {
@@ -86,78 +103,114 @@ function isDisabled(value: string | undefined): boolean {
 }
 
 /**
- * Apply host-local initialization to the resolved opencode config.
+ * Apply host-local initialization to a plain resolved config.
  *
- * This function never reads, prints, or persists secrets. It only checks for
- * presence of environment keys and local directories, and it leaves explicitly
- * custom MCP commands/paths untouched.
+ * Optional Exa/Semble/Home Assistant servers are added only when absent and
+ * their prerequisites are present. Existing entries are never re-enabled or
+ * rewritten; SQZ only gets the Windows executable-name adjustment.
  */
 export function applyHostConfig(
   config: HostConfig,
   options: HostConfigOptions = {},
 ): HostConfigSummary {
-  const platform = options.platform ?? process.platform;
-  const env = options.env ?? process.env;
-  const home = options.homedir ?? homedir();
-  const isDirectory = options.isDirectory ?? defaultIsDirectory;
-  const hasFile = options.hasFile ?? defaultHasFile;
-  const mcp = config.mcp ?? {};
+  const resolved = resolveOptions(options);
+  config.mcp ??= {};
+  config.mcp.servers ??= {};
+  const servers = config.mcp.servers;
+  const before = new Set(Object.keys(servers));
 
-  const sqz = mcp.sqz;
-  if (
-    sqz &&
-    platform === "win32" &&
-    Array.isArray(sqz.command) &&
-    sqz.command.length === 1 &&
-    sqz.command[0] === "sqz-mcp"
-  ) {
+  const sqz = servers.sqz;
+  if (sqz && resolved.platform === "win32" && isStandardSqzCommand(sqz.command)) {
     // Windows PATH shim: use the executable name, never an absolute path.
     sqz.command = ["sqz-mcp.exe"];
   }
 
-  const envSembleDir = env.SEMBLE_MCP_DIR?.trim() ?? "";
-  const sembleCandidate = envSembleDir || join(home, "mcp-servers", "semble");
+  const envSembleDir = resolved.env.SEMBLE_MCP_DIR?.trim() ?? "";
+  const sembleCandidate = envSembleDir || join(resolved.home, "mcp-servers", "semble");
+  const disableSemble = isDisabled(resolved.env.OPENCODE_DISABLE_SEMBLE);
+  if (servers.semble && disableSemble) {
+    // One-way kill switch: disable an existing Semble entry, but preserve its
+    // command and every other field.
+    servers.semble.disabled = true;
+  }
   const sembleValid =
-    isLocalDirectory(sembleCandidate, platform, isDirectory) &&
-    hasFile(join(sembleCandidate, "pyproject.toml"));
-
-  const semble = mcp.semble;
-  if (semble && isStandardSembleCommand(semble.command, envSembleDir)) {
-    if (isDisabled(env.OPENCODE_DISABLE_SEMBLE)) {
-      semble.enabled = false;
-    } else if (sembleValid) {
-      semble.command = ["uv", "--directory", sembleCandidate, "run", "semble"];
-      semble.enabled = true;
-    } else {
-      semble.enabled = false;
-    }
+    !disableSemble &&
+    isLocalDirectory(sembleCandidate, resolved.platform, resolved.isDirectory) &&
+    resolved.hasFile(join(sembleCandidate, "pyproject.toml"));
+  if (!servers.semble && sembleValid) {
+    servers.semble = {
+      type: "local",
+      command: ["uv", "--directory", sembleCandidate, "run", "semble"],
+      disabled: false,
+      codemode: true,
+    };
   }
 
-  const homeAssistant = mcp.home_assistant;
-  if (homeAssistant) {
-    const tokenPresent = Boolean(env.HA_BEARER_TOKEN?.trim());
-    const envUrl = env.HA_MCP_URL?.trim();
-    const standardUrl =
-      !homeAssistant.url ||
-      homeAssistant.url === "{env:HA_MCP_URL}" ||
-      homeAssistant.url === (env.HA_MCP_URL ?? "");
-    if (standardUrl) {
-      homeAssistant.url = envUrl || DEFAULT_HOME_ASSISTANT_URL;
-    }
-    homeAssistant.enabled = tokenPresent;
+  const exaKey = resolved.env.EXA_API_KEY?.trim();
+  if (!servers.exa && exaKey) {
+    // The post-config transform does not resolve {env:...}; interpolate the
+    // credential in memory only. Never persist or log this value.
+    servers.exa = {
+      type: "remote",
+      url: EXA_URL,
+      headers: { "x-api-key": exaKey },
+      oauth: false,
+      disabled: false,
+      codemode: true,
+    };
   }
 
-  const exa = mcp.exa;
-  if (exa) {
-    exa.oauth = false;
-    exa.enabled = Boolean(env.EXA_API_KEY?.trim());
+  const haUrl = resolved.env.HA_MCP_URL?.trim();
+  const haToken = resolved.env.HA_BEARER_TOKEN?.trim();
+  if (!servers.home_assistant && haUrl && haToken) {
+    // Both URL and token are required. Interpolate the bearer token in memory
+    // only; there is no hardcoded fallback host.
+    servers.home_assistant = {
+      type: "remote",
+      url: haUrl,
+      headers: { Authorization: `Bearer ${haToken}` },
+      disabled: false,
+      codemode: true,
+    };
   }
 
   return {
-    sqzCommand: [...(sqz?.command ?? [])],
-    sembleEnabled: Boolean(semble?.enabled),
-    sembleCommand: [...(semble?.command ?? [])],
-    homeAssistantEnabled: Boolean(homeAssistant?.enabled),
-    exaEnabled: Boolean(exa?.enabled),
+    added: Object.keys(servers).filter((name) => !before.has(name)).sort(),
+    sqzCommand: [...(servers.sqz?.command ?? [])],
   };
+}
+
+/**
+ * Register the host-local MCP transform with the OpenCode 2.x plugin context.
+ *
+ * The retrieval extension owner calls this once during setup. The returned
+ * Registration can be disposed with the extension's own lifecycle.
+ */
+export async function registerHostConfig(
+  context: HostConfigContext,
+  options: HostConfigOptions = {},
+): Promise<Registration> {
+  const disableSemble = isDisabled((options.env ?? process.env).OPENCODE_DISABLE_SEMBLE);
+  return context.mcp.transform((editor: MCPEditor) => {
+    const current: HostConfig = {
+      mcp: { servers: Object.fromEntries(editor.list()) },
+    };
+    applyHostConfig(current, options);
+    for (const [name, server] of Object.entries(current.mcp?.servers ?? {})) {
+      if (!server) continue;
+      if (editor.get(name) === undefined) {
+        editor.set(name, server as Parameters<MCPEditor["set"]>[1]);
+      } else if (name === "sqz") {
+        editor.update(name, (target) => {
+          if (target.type === "local" && server.command !== undefined) {
+            target.command = server.command;
+          }
+        });
+      } else if (name === "semble" && disableSemble) {
+        editor.update(name, (target) => {
+          target.disabled = true;
+        });
+      }
+    }
+  });
 }

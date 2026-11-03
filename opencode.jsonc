@@ -1,577 +1,388 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  // Pin the validated runtime; upgrade deliberately with `opencode upgrade <version>`.
-  "autoupdate": false,
-  "model": "openrouter/gpt-6-luna",
-  "small_model": "openrouter/deepseek-v4.1-flash",
+  // Native OpenCode 2.2.5 configuration. Upgrade deliberately; do not enable
+  // legacy 1.x plugins here.
+  "update": "disable",
+  "model": {
+    "providerID": "openrouter",
+    "model": "gpt-6-luna",
+    "variant": "high"
+  },
   "compaction": {
     "auto": true,
-    "preserve_recent_tokens": 40000,
-    "reserved": 100000
+    "keep": { "tokens": 40000 },
+    "buffer": 100000
   },
   "instructions": ["instructions/*.md"],
-  "provider": {
+  "websearch": { "provider": "tinyfish" },
+  "plugins": [
+    "@tarquinen/opencode-dcp@3.2.0",
+    "cc-safety-net@2.7.2"
+  ],
+  "providers": {
     "openrouter": {
-      "options": {},
+      "name": "OpenRouter",
+      "canonical": "openrouter",
+      "package": "@opencode/ai/providers/openrouter",
       "models": {
         "free": {
-          "id": "openrouter/free",
+          "modelID": "openrouter/free",
           "name": "Free Models Router",
-          "reasoning": false,
+          "capabilities": { "reasoning": { "supported": false } },
           "limit": { "context": 200000, "output": 16384 }
         },
         "gpt-5.6-luna": {
-          "id": "openai/gpt-5.6-luna",
+          "modelID": "openai/gpt-5.6-luna",
           "name": "GPT-5.6 Luna",
-          "reasoning": true,
-          "options": { "reasoningEffort": "high", "reasoningSummary": "auto" },
+          "capabilities": {
+            "reasoning": { "supported": true, "effort": ["low", "high", "max"] },
+            "temperature": true,
+            "tools": true
+          },
           "limit": { "context": 1050000, "output": 128000 }
         },
         "gpt-6-luna": {
-          "id": "openai/gpt-6-luna",
+          "modelID": "openai/gpt-6-luna",
           "name": "GPT-6 Luna",
-          "reasoning": true,
-          "options": { "reasoningEffort": "high", "reasoningSummary": "auto" },
+          "capabilities": {
+            "reasoning": { "supported": true, "effort": ["low", "high", "max"] },
+            "temperature": true,
+            "tools": true
+          },
           "limit": { "context": 1050000, "output": 128000 }
         },
         "deepseek-v4.1-flash-1017": {
-          "id": "deepseek/deepseek-v4.1-flash-1017",
+          "modelID": "deepseek/deepseek-v4.1-flash-1017",
           "name": "DeepSeek V4.1 Flash 1017",
-          "reasoning": true,
-          "options": { "reasoningEffort": "low", "reasoningSummary": "auto" },
+          "capabilities": {
+            "reasoning": { "supported": true, "effort": ["low", "high", "max"] },
+            "temperature": true,
+            "tools": true
+          },
           "limit": { "context": 1048576, "output": 32768 }
         },
         "deepseek-v4.1-flash": {
-          "id": "deepseek/deepseek-v4.1-flash",
+          "modelID": "deepseek/deepseek-v4.1-flash",
           "name": "DeepSeek V4.1 Flash",
-          "reasoning": true,
-          "options": { "reasoningEffort": "low", "reasoningSummary": "auto" },
+          "capabilities": {
+            "reasoning": { "supported": true, "effort": ["low", "high", "max"] },
+            "temperature": true,
+            "tools": true
+          },
           "limit": { "context": 1048576, "output": 16384 }
         }
       }
     },
     "llamacpp": {
-      "npm": "@ai-sdk/openai-compatible",
       "name": "Local Llama.cpp",
-      "options": {
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
         "baseURL": "http://127.0.0.1:8080/v1",
         "apiKey": "no-key-required"
       },
       "models": {
         "qwen-27b": {
           "name": "Qwen 3.6 27B",
-          "reasoning": true,
+          "capabilities": { "reasoning": { "supported": true } },
           "limit": { "context": 96000, "output": 65536 }
         }
       }
     }
   },
-  // Temporarily empty for the OpenCode 2.0 upgrade preparation. 1.x plugins are
-  // incompatible with 2.0; original pinned specifiers are recorded in
-  // docs/upgrade-handoff.md.
-  "plugin": [],
   "mcp": {
-    "context7": { "type": "remote", "url": "https://mcp.context7.com/mcp", "enabled": true },
-    // Base stays disabled. The policy plugin may enable this only when EXA_API_KEY is present.
-    "exa": {
-      "type": "remote",
-      "url": "https://mcp.exa.ai/mcp",
-      "enabled": false,
-      "oauth": false,
-      "headers": { "x-api-key": "{env:EXA_API_KEY}" }
-    },
-    "gh_grep": { "type": "remote", "url": "https://mcp.grep.app", "enabled": true },
-    "sqz": {
-      "type": "local",
-      // Base uses the portable PATH command; the host hook selects the Windows
-      // executable only when this is the standard command.
-      "command": ["sqz-mcp"],
-      "enabled": true
-    },
-    "duckduckgo": {
-      "type": "local",
-      "command": ["uvx", "--python", "3.11", "duckduckgo-mcp-server"],
-      "enabled": true
-    },
-    // Host-local repo. Base stays disabled; enable through a host override or plugin.
-    "semble": {
-      "type": "local",
-      "command": ["uv", "--directory", "{env:SEMBLE_MCP_DIR}", "run", "semble"],
-      "enabled": false
-    },
-    // Host-local repo. Disabled until the 108/108 connector failures are diagnosed.
-    "ebay": {
-      "type": "local",
-      "command": ["uv", "--directory", "{env:EBAY_MCP_DIR}", "run", "ebay-mcp"],
-      "environment": {
-        "EBAY_CLIENT_ID": "{env:EBAY_CLIENT_ID}",
-        "EBAY_CLIENT_SECRET": "{env:EBAY_CLIENT_SECRET}",
-        "EBAY_ENV": "{env:EBAY_ENV}"
+    "servers": {
+      "context7": {
+        "type": "remote",
+        "url": "https://mcp.context7.com/mcp",
+        "disabled": false,
+        "codemode": true
       },
-      "enabled": false
-    },
-    "home_assistant": {
-      "type": "remote",
-      // The host hook enables this only when HA_BEARER_TOKEN is present.
-      "url": "{env:HA_MCP_URL}",
-      "headers": {
-        "Authorization": "Bearer {env:HA_BEARER_TOKEN}"
+      "gh_grep": {
+        "type": "remote",
+        "url": "https://mcp.grep.app",
+        "disabled": false,
+        "codemode": true
       },
-      "enabled": false
-    },
-    "composio": {
-      "type": "remote",
-      "url": "https://connect.composio.dev/mcp",
-      "oauth": {},
-      "enabled": true
+      "sqz": {
+        "type": "local",
+        "command": ["sqz-mcp"],
+        "disabled": false,
+        "codemode": false
+      },
+      "duckduckgo": {
+        "type": "local",
+        "command": ["uvx", "--python", "3.11", "duckduckgo-mcp-server"],
+        "disabled": false,
+        "codemode": true
+      },
+      "ebay": {
+        "type": "local",
+        "command": ["uv", "--directory", "{env:EBAY_MCP_DIR}", "run", "ebay-mcp"],
+        "environment": {
+          "EBAY_CLIENT_ID": "{env:EBAY_CLIENT_ID}",
+          "EBAY_CLIENT_SECRET": "{env:EBAY_CLIENT_SECRET}",
+          "EBAY_ENV": "{env:EBAY_ENV}"
+        },
+        "disabled": true,
+        "codemode": false
+      },
+      "composio": {
+        "type": "remote",
+        "url": "https://connect.composio.dev/mcp",
+        "oauth": {},
+        "disabled": false,
+        "codemode": true
+      }
     }
   },
-  // Default posture: deny every unknown tool first, then re-allow only the
-  // local/native tools and explicitly configured surfaces. Last matching
-  // permission wins, so per-agent allows can override this global deny.
-  "permission": {
-    "*": "deny",
-    "doom_loop": "ask",
-    "external_directory": "ask",
-    "canvas_*": "allow",
-    "read": {
-      "*": "allow",
-      "*.env": "ask",
-      "*.env.*": "ask",
-      "*.env.example": "allow"
-    },
-    "glob": "allow",
-    "grep": "allow",
-    "compress": "allow",
-    "sqz": "allow",
-    "sqz_compress": "allow",
-    "sqz_passthrough": "allow",
-    "lsp": "allow",
-    "task": "deny",
-    "websearch": "deny",
-    "websearch_cited": "deny",
-    "webfetch": "deny",
-    "context7_*": "deny",
-    "exa_*": "deny",
-    "gh_grep_*": "deny",
-    "duckduckgo_*": "deny",
-    "semble_*": "deny",
-    "composio_*": "deny",
-    "ebay_*": "deny",
-    "home_assistant_*": "deny",
-    "tinyfish_search": "deny",
-    "retrieval_control": "deny"
-  },
+  // Unknown tools and MCP namespaces are denied first. Global rules cover
+  // local/native tools; agent rules add role-specific allows. Last match wins.
+  "permissions": [
+    { "action": "*", "resource": "*", "effect": "deny" },
+    { "action": "doom_loop", "resource": "*", "effect": "ask" },
+    { "action": "external_directory", "resource": "*", "effect": "ask" },
+    { "action": "lsp", "resource": "*", "effect": "allow" },
+    { "action": "read", "resource": "*", "effect": "allow" },
+    { "action": "read", "resource": "*.env", "effect": "ask" },
+    { "action": "read", "resource": "*.env.*", "effect": "ask" },
+    { "action": "read", "resource": "*.env.example", "effect": "allow" },
+    { "action": "glob", "resource": "*", "effect": "allow" },
+    { "action": "grep", "resource": "*", "effect": "allow" },
+    { "action": "question", "resource": "*", "effect": "deny" },
+    { "action": "todowrite", "resource": "*", "effect": "deny" },
+    { "action": "skill", "resource": "*", "effect": "deny" },
+    { "action": "subagent", "resource": "*", "effect": "deny" },
+    { "action": "shell", "resource": "*", "effect": "deny" },
+    { "action": "edit", "resource": "*", "effect": "deny" },
+    { "action": "webfetch", "resource": "*", "effect": "deny" },
+    { "action": "websearch", "resource": "*", "effect": "deny" },
+    { "action": "execute", "resource": "*", "effect": "deny" },
+    { "action": "context7_*", "resource": "*", "effect": "deny" },
+    { "action": "exa_*", "resource": "*", "effect": "deny" },
+    { "action": "gh_grep_*", "resource": "*", "effect": "deny" },
+    { "action": "duckduckgo_*", "resource": "*", "effect": "deny" },
+    { "action": "semble_*", "resource": "*", "effect": "deny" },
+    { "action": "composio_*", "resource": "*", "effect": "deny" },
+    { "action": "ebay_*", "resource": "*", "effect": "deny" },
+    { "action": "home_assistant_*", "resource": "*", "effect": "deny" },
+    { "action": "retrieval_control", "resource": "*", "effect": "deny" },
+    { "action": "sqz_sqz_read_file", "resource": "*", "effect": "deny" },
+    { "action": "sqz_sqz_list_dir", "resource": "*", "effect": "deny" },
+    { "action": "sqz_sqz_grep", "resource": "*", "effect": "deny" },
+    { "action": "sqz_expand", "resource": "*", "effect": "deny" }
+  ],
   "default_agent": "build",
-  "subagent_depth": 1,
-  "agent": {
+  "experimental": {
+    "todo": true,
+    "subagent_depth": 1
+  },
+  "agents": {
+    "general": {
+      "disabled": true
+    },
     "build": {
       "description": "Primary supervising implementation agent. Owns the objective, research breadth, evidence sufficiency, and budget/extension decisions. Delegates execution and one end-to-end Composio workflow.",
-      "model": "openrouter/gpt-6-luna",
-      "options": { "reasoningEffort": "high", "reasoningSummary": "detailed" },
-      "temperature": 0.2,
+      "model": { "providerID": "openrouter", "model": "gpt-6-luna", "variant": "high" },
+      "request": { "body": { "temperature": 0.2 } },
       "mode": "primary",
-      "permission": {
-        "read": {
-          "*": "allow",
-          "*.env": "ask",
-          "*.env.*": "ask",
-          "*.env.example": "allow"
-        },
-        "glob": "allow",
-        "grep": "allow",
-        "skill": "allow",
-        "question": "allow",
-        "todowrite": "allow",
-        "plan_enter": "allow",
-        "plan_exit": "allow",
-        "sqz_sqz_read_file": "allow",
-        "sqz_sqz_list_dir": "allow",
-        "sqz_sqz_grep": "allow",
-        "sqz_expand": "allow",
-        "write": "deny",
-        "edit": "deny",
-        "patch": "deny",
-        "bash": "deny",
-        "websearch": "deny",
-        "websearch_cited": "deny",
-        "webfetch": "deny",
-        "context7_*": "deny",
-        "exa_*": "deny",
-        "gh_grep_*": "deny",
-        "duckduckgo_*": "deny",
-        "semble_*": "deny",
-        "composio_*": "deny",
-        "ebay_*": "deny",
-        "tinyfish_search": "deny",
-        // Preserve the authorized Home Assistant capability on the interactive primary.
-        "home_assistant_*": "allow",
-        // Parent-only budget extension for a fetch child; the plugin enforces target/action.
-        "retrieval_control": "allow",
-        "task": {
-          "*": "deny",
-          "code": "allow",
-          "explore": "allow",
-          "fetch": "allow",
-          "track": "allow",
-          "review": "allow",
-          "composio": "allow"
-        }
-      }
+      "permissions": [
+        { "action": "question", "resource": "*", "effect": "allow" },
+        { "action": "todowrite", "resource": "*", "effect": "allow" },
+        { "action": "compress", "resource": "*", "effect": "allow" },
+        { "action": "skill", "resource": "worktree-flow", "effect": "allow" },
+        { "action": "skill", "resource": "review-flow", "effect": "allow" },
+        { "action": "skill", "resource": "composio-google-sheets", "effect": "allow" },
+        { "action": "skill", "resource": "customize-opencode", "effect": "allow" },
+        { "action": "sqz_sqz_read_file", "resource": "*", "effect": "allow" },
+        { "action": "sqz_sqz_list_dir", "resource": "*", "effect": "allow" },
+        { "action": "sqz_sqz_grep", "resource": "*", "effect": "allow" },
+        { "action": "sqz_expand", "resource": "*", "effect": "allow" },
+        { "action": "sqz_compress", "resource": "*", "effect": "allow" },
+        { "action": "sqz_passthrough", "resource": "*", "effect": "allow" },
+        { "action": "execute", "resource": "*", "effect": "allow" },
+        { "action": "home_assistant_*", "resource": "*", "effect": "allow" },
+        { "action": "retrieval_control", "resource": "*", "effect": "allow" },
+        { "action": "subagent", "resource": "code", "effect": "allow" },
+        { "action": "subagent", "resource": "explore", "effect": "allow" },
+        { "action": "subagent", "resource": "fetch", "effect": "allow" },
+        { "action": "subagent", "resource": "track", "effect": "allow" },
+        { "action": "subagent", "resource": "review", "effect": "allow" },
+        { "action": "subagent", "resource": "composio", "effect": "allow" }
+      ]
     },
-
     "plan": {
       "description": "Primary planning agent. Read-only; delegates exploration, retrieval, tracker operations, and one end-to-end Composio workflow. Does not delegate code.",
-      "model": "openrouter/gpt-6-luna",
-      "options": { "reasoningEffort": "high", "reasoningSummary": "detailed" },
-      "temperature": 0.25,
+      "model": { "providerID": "openrouter", "model": "gpt-6-luna", "variant": "high" },
+      "request": { "body": { "temperature": 0.25 } },
       "mode": "primary",
-      "permission": {
-        "read": {
-          "*": "allow",
-          "*.env": "ask",
-          "*.env.*": "ask",
-          "*.env.example": "allow"
-        },
-        "glob": "allow",
-        "grep": "allow",
-        "skill": "allow",
-        "question": "allow",
-        "todowrite": "allow",
-        "plan_enter": "allow",
-        "plan_exit": "allow",
-        "sqz_sqz_read_file": "allow",
-        "sqz_sqz_list_dir": "allow",
-        "sqz_sqz_grep": "allow",
-        "sqz_expand": "allow",
-        "write": "deny",
-        "edit": "deny",
-        "patch": "deny",
-        "bash": "deny",
-        "websearch": "deny",
-        "websearch_cited": "deny",
-        "webfetch": "deny",
-        "context7_*": "deny",
-        "exa_*": "deny",
-        "gh_grep_*": "deny",
-        "duckduckgo_*": "deny",
-        "semble_*": "deny",
-        "composio_*": "deny",
-        "ebay_*": "deny",
-        "tinyfish_search": "deny",
-        "home_assistant_*": "deny",
-        "retrieval_control": "allow",
-        "task": {
-          "*": "deny",
-          "explore": "allow",
-          "fetch": "allow",
-          "track": "allow",
-          "composio": "allow"
-        }
-      }
+      "permissions": [
+        { "action": "question", "resource": "*", "effect": "allow" },
+        { "action": "todowrite", "resource": "*", "effect": "allow" },
+        { "action": "compress", "resource": "*", "effect": "allow" },
+        { "action": "skill", "resource": "worktree-flow", "effect": "allow" },
+        { "action": "skill", "resource": "review-flow", "effect": "allow" },
+        { "action": "skill", "resource": "composio-google-sheets", "effect": "allow" },
+        { "action": "skill", "resource": "customize-opencode", "effect": "allow" },
+        { "action": "sqz_sqz_read_file", "resource": "*", "effect": "allow" },
+        { "action": "sqz_sqz_list_dir", "resource": "*", "effect": "allow" },
+        { "action": "sqz_sqz_grep", "resource": "*", "effect": "allow" },
+        { "action": "sqz_expand", "resource": "*", "effect": "allow" },
+        { "action": "sqz_compress", "resource": "*", "effect": "allow" },
+        { "action": "sqz_passthrough", "resource": "*", "effect": "allow" },
+        { "action": "retrieval_control", "resource": "*", "effect": "allow" },
+        { "action": "subagent", "resource": "explore", "effect": "allow" },
+        { "action": "subagent", "resource": "fetch", "effect": "allow" },
+        { "action": "subagent", "resource": "track", "effect": "allow" },
+        { "action": "subagent", "resource": "composio", "effect": "allow" }
+      ]
     },
-
     "code": {
       "description": "Scoped implementation worker. Local code edits and narrow verification only. No external web/MCP, no children.",
-      "hidden": true,
-      "model": "openrouter/deepseek-v4.1-flash-1017",
-      "options": { "reasoningEffort": "low", "reasoningSummary": "auto" },
-      "temperature": 0.35,
+      "model": { "providerID": "openrouter", "model": "deepseek-v4.1-flash-1017", "variant": "low" },
+      "request": { "body": { "temperature": 0.35 } },
       "mode": "subagent",
-      "permission": {
-        "read": {
-          "*": "allow",
-          "*.env": "ask",
-          "*.env.*": "ask",
-          "*.env.example": "allow"
-        },
-        "glob": "allow",
-        "grep": "allow",
-        "skill": "allow",
-        "sqz_sqz_read_file": "allow",
-        "sqz_sqz_list_dir": "allow",
-        "sqz_sqz_grep": "allow",
-        "sqz_expand": "allow",
-        "write": "allow",
-        "edit": "allow",
-        "patch": "allow",
-        "apply_patch": "allow",
-        "bash": {
-          "*": "allow",
-          // Not a network sandbox: package installs and similar tools can still
-          // reach the network. Deny only obvious direct web-fetch commands.
-          "curl *": "deny",
-          "curl.exe *": "deny",
-          "wget *": "deny",
-          "wget.exe *": "deny",
-          "Invoke-WebRequest*": "deny",
-          "Invoke-RestMethod*": "deny",
-          "iwr *": "deny",
-          "irm *": "deny",
-          "Start-BitsTransfer*": "deny",
-          "git clone *": "deny"
-        },
-        "websearch": "deny",
-        "websearch_cited": "deny",
-        "webfetch": "deny",
-        "context7_*": "deny",
-        "exa_*": "deny",
-        "gh_grep_*": "deny",
-        "duckduckgo_*": "deny",
-        "semble_*": "deny",
-        "composio_*": "deny",
-        "ebay_*": "deny",
-        "home_assistant_*": "deny",
-        "tinyfish_search": "deny",
-        "retrieval_control": "deny",
-        "task": {
-          "*": "deny"
-        }
-      }
+      "hidden": false,
+      "permissions": [
+        { "action": "skill", "resource": "worktree-flow", "effect": "allow" },
+        { "action": "sqz_sqz_read_file", "resource": "*", "effect": "allow" },
+        { "action": "sqz_sqz_list_dir", "resource": "*", "effect": "allow" },
+        { "action": "sqz_sqz_grep", "resource": "*", "effect": "allow" },
+        { "action": "sqz_expand", "resource": "*", "effect": "allow" },
+        { "action": "sqz_compress", "resource": "*", "effect": "allow" },
+        { "action": "sqz_passthrough", "resource": "*", "effect": "allow" },
+        { "action": "edit", "resource": "*", "effect": "allow" },
+        { "action": "shell", "resource": "*", "effect": "allow" },
+        { "action": "shell", "resource": "curl *", "effect": "deny" },
+        { "action": "shell", "resource": "curl.exe *", "effect": "deny" },
+        { "action": "shell", "resource": "wget *", "effect": "deny" },
+        { "action": "shell", "resource": "wget.exe *", "effect": "deny" },
+        { "action": "shell", "resource": "Invoke-WebRequest*", "effect": "deny" },
+        { "action": "shell", "resource": "Invoke-RestMethod*", "effect": "deny" },
+        { "action": "shell", "resource": "iwr *", "effect": "deny" },
+        { "action": "shell", "resource": "irm *", "effect": "deny" },
+        { "action": "shell", "resource": "Start-BitsTransfer*", "effect": "deny" },
+        { "action": "shell", "resource": "git clone *", "effect": "deny" }
+      ]
     },
-
     "review": {
       "description": "Read-only review worker. Correctness, regressions, scope, and verification. No external web/MCP, no children.",
-      "model": "openrouter/deepseek-v4.1-flash-1017",
-      "options": { "reasoningEffort": "low", "reasoningSummary": "auto" },
-      "temperature": 0.1,
+      "model": { "providerID": "openrouter", "model": "deepseek-v4.1-flash-1017", "variant": "low" },
+      "request": { "body": { "temperature": 0.1 } },
       "mode": "subagent",
-      "permission": {
-        "read": {
-          "*": "allow",
-          "*.env": "ask",
-          "*.env.*": "ask",
-          "*.env.example": "allow"
-        },
-        "glob": "allow",
-        "grep": "allow",
-        "skill": "allow",
-        "sqz_sqz_read_file": "allow",
-        "sqz_sqz_list_dir": "allow",
-        "sqz_sqz_grep": "allow",
-        "sqz_expand": "allow",
-        "write": "deny",
-        "edit": "deny",
-        "patch": "deny",
-        "websearch": "deny",
-        "websearch_cited": "deny",
-        "webfetch": "deny",
-        "context7_*": "deny",
-        "exa_*": "deny",
-        "gh_grep_*": "deny",
-        "duckduckgo_*": "deny",
-        "semble_*": "deny",
-        "composio_*": "deny",
-        "ebay_*": "deny",
-        "home_assistant_*": "deny",
-        "tinyfish_search": "deny",
-        "retrieval_control": "deny",
-        "bash": {
-          "*": "deny",
-          "git status*": "allow",
-          "git diff*": "allow",
-          "git log*": "allow"
-        },
-        "task": {
-          "*": "deny"
-        }
-      }
+      "permissions": [
+        { "action": "skill", "resource": "review-flow", "effect": "allow" },
+        { "action": "sqz_sqz_read_file", "resource": "*", "effect": "allow" },
+        { "action": "sqz_sqz_list_dir", "resource": "*", "effect": "allow" },
+        { "action": "sqz_sqz_grep", "resource": "*", "effect": "allow" },
+        { "action": "sqz_expand", "resource": "*", "effect": "allow" },
+        { "action": "sqz_compress", "resource": "*", "effect": "allow" },
+        { "action": "sqz_passthrough", "resource": "*", "effect": "allow" },
+        { "action": "shell", "resource": "*", "effect": "deny" },
+        { "action": "shell", "resource": "git status*", "effect": "allow" },
+        { "action": "shell", "resource": "git diff*", "effect": "allow" },
+        { "action": "shell", "resource": "git log*", "effect": "allow" }
+      ]
     },
-
     "explore": {
-      "description": "Local reconnaissance worker. Read-only local files and Semble local semantic search. Remote git repo URLs are not allowed. No web, no children.",
-      "model": "openrouter/deepseek-v4.1-flash",
-      "options": { "reasoningEffort": "low", "reasoningSummary": "auto" },
-      "hidden": true,
-      "temperature": 0.2,
+      "description": "Local reconnaissance worker. Read-only local files and Semble local semantic search through Code Mode. Remote git repo URLs are not allowed. No web, no children.",
+      "model": { "providerID": "openrouter", "model": "deepseek-v4.1-flash", "variant": "low" },
+      "request": { "body": { "temperature": 0.2 } },
       "mode": "subagent",
-      "permission": {
-        "read": {
-          "*": "allow",
-          "*.env": "ask",
-          "*.env.*": "ask",
-          "*.env.example": "allow"
-        },
-        "glob": "allow",
-        "grep": "allow",
-        "sqz_sqz_read_file": "allow",
-        "sqz_sqz_list_dir": "allow",
-        "sqz_sqz_grep": "allow",
-        "sqz_expand": "allow",
-        "write": "deny",
-        "edit": "deny",
-        "patch": "deny",
-        "websearch": "deny",
-        "websearch_cited": "deny",
-        "webfetch": "deny",
-        "context7_*": "deny",
-        "exa_*": "deny",
-        "gh_grep_*": "deny",
-        "duckduckgo_*": "deny",
-        "composio_*": "deny",
-        "ebay_*": "deny",
-        "home_assistant_*": "deny",
-        "tinyfish_search": "deny",
-        "retrieval_control": "deny",
-        // Local semantic search only; the policy plugin rejects remote git repo URLs.
-        "semble_*": "allow",
-        "bash": {
-          "*": "deny",
-          "ls *": "allow",
-          "tree *": "allow",
-          "cat *": "allow",
-          "grep *": "allow",
-          "rg *": "allow"
-        },
-        "task": {
-          "*": "deny"
-        }
-      }
+      "hidden": false,
+      "permissions": [
+        { "action": "sqz_sqz_read_file", "resource": "*", "effect": "allow" },
+        { "action": "sqz_sqz_list_dir", "resource": "*", "effect": "allow" },
+        { "action": "sqz_sqz_grep", "resource": "*", "effect": "allow" },
+        { "action": "sqz_expand", "resource": "*", "effect": "allow" },
+        { "action": "sqz_compress", "resource": "*", "effect": "allow" },
+        { "action": "sqz_passthrough", "resource": "*", "effect": "allow" },
+        { "action": "execute", "resource": "*", "effect": "allow" },
+        { "action": "semble_*", "resource": "*", "effect": "allow" },
+        { "action": "shell", "resource": "*", "effect": "deny" },
+        { "action": "shell", "resource": "ls *", "effect": "allow" },
+        { "action": "shell", "resource": "tree *", "effect": "allow" },
+        { "action": "shell", "resource": "cat *", "effect": "allow" },
+        { "action": "shell", "resource": "grep *", "effect": "allow" },
+        { "action": "shell", "resource": "rg *", "effect": "allow" }
+      ]
     },
-
     "fetch": {
-      "description": "Sole external retrieval worker. Budgeted web search/fetch via DuckDuckGo, TinyFish, Exa, Context7, and gh_grep. No synthesis, no children.",
-      "model": "openrouter/deepseek-v4.1-flash",
-      "options": { "reasoningEffort": "low", "reasoningSummary": "auto" },
-      "temperature": 0.1,
+      "description": "Sole external retrieval worker. Budgeted native web search/fetch plus Code Mode retrieval providers. No synthesis, no children.",
+      "model": { "providerID": "openrouter", "model": "deepseek-v4.1-flash", "variant": "low" },
+      "request": { "body": { "temperature": 0.1 } },
       "mode": "subagent",
-      "hidden": true,
+      "hidden": false,
       "steps": 10,
-      "permission": {
-        "websearch": "allow",
-        "websearch_cited": "allow",
-        "webfetch": "allow",
-        "context7_*": "allow",
-        "exa_*": "allow",
-        "gh_grep_*": "allow",
-        "duckduckgo_*": "allow",
-        // Custom policy-plugin tools: search-only TinyFish and status-only retrieval_control.
-        "tinyfish_search": "allow",
-        "retrieval_control": "allow",
-        "read": "deny",
-        "glob": "deny",
-        "grep": "deny",
-        "skill": "deny",
-        "question": "deny",
-        "todowrite": "deny",
-        "lsp": "deny",
-        "sqz_sqz_read_file": "deny",
-        "sqz_sqz_list_dir": "deny",
-        "sqz_sqz_grep": "deny",
-        "sqz_expand": "deny",
-        "write": "deny",
-        "edit": "deny",
-        "patch": "deny",
-        "bash": "deny",
-        "semble_*": "deny",
-        "composio_*": "deny",
-        "ebay_*": "deny",
-        "home_assistant_*": "deny",
-        "task": {
-          "*": "deny"
-        }
-      }
+      "permissions": [
+        { "action": "webfetch", "resource": "*", "effect": "allow" },
+        { "action": "websearch", "resource": "*", "effect": "allow" },
+        { "action": "execute", "resource": "*", "effect": "allow" },
+        { "action": "context7_*", "resource": "*", "effect": "allow" },
+        { "action": "exa_*", "resource": "*", "effect": "allow" },
+        { "action": "gh_grep_*", "resource": "*", "effect": "allow" },
+        { "action": "duckduckgo_*", "resource": "*", "effect": "allow" },
+        { "action": "retrieval_control", "resource": "*", "effect": "allow" },
+        { "action": "read", "resource": "*", "effect": "deny" },
+        { "action": "glob", "resource": "*", "effect": "deny" },
+        { "action": "grep", "resource": "*", "effect": "deny" },
+        { "action": "skill", "resource": "*", "effect": "deny" },
+        { "action": "question", "resource": "*", "effect": "deny" },
+        { "action": "todowrite", "resource": "*", "effect": "deny" },
+        { "action": "lsp", "resource": "*", "effect": "deny" },
+        { "action": "sqz_sqz_read_file", "resource": "*", "effect": "deny" },
+        { "action": "sqz_sqz_list_dir", "resource": "*", "effect": "deny" },
+        { "action": "sqz_sqz_grep", "resource": "*", "effect": "deny" },
+        { "action": "sqz_expand", "resource": "*", "effect": "deny" },
+        { "action": "subagent", "resource": "*", "effect": "deny" },
+        { "action": "shell", "resource": "*", "effect": "deny" },
+        { "action": "edit", "resource": "*", "effect": "deny" }
+      ]
     },
-
     "track": {
-      "description": "Beads tracker worker. Scoped br/bv only; no code edits, web, or children.",
-      "model": "openrouter/deepseek-v4.1-flash",
-      "options": { "reasoningEffort": "low", "reasoningSummary": "auto" },
-      "temperature": 0.1,
+      "description": "Beads tracker worker. Scoped br and bv --robot-* shell only; no code edits, web, or children.",
+      "model": { "providerID": "openrouter", "model": "deepseek-v4.1-flash", "variant": "low" },
+      "request": { "body": { "temperature": 0.1 } },
       "mode": "subagent",
-      "permission": {
-        "read": {
-          "*": "allow",
-          "*.env": "ask",
-          "*.env.*": "ask",
-          "*.env.example": "allow"
-        },
-        "glob": "allow",
-        "grep": "allow",
-        "skill": "allow",
-        "sqz_sqz_read_file": "deny",
-        "sqz_sqz_list_dir": "deny",
-        "sqz_sqz_grep": "deny",
-        "sqz_expand": "deny",
-        "question": "deny",
-        "todowrite": "deny",
-        "lsp": "deny",
-        "write": "deny",
-        "edit": "deny",
-        "patch": "deny",
-        "websearch": "deny",
-        "websearch_cited": "deny",
-        "webfetch": "deny",
-        "context7_*": "deny",
-        "exa_*": "deny",
-        "gh_grep_*": "deny",
-        "duckduckgo_*": "deny",
-        "semble_*": "deny",
-        "composio_*": "deny",
-        "ebay_*": "deny",
-        "home_assistant_*": "deny",
-        "tinyfish_search": "deny",
-        "retrieval_control": "deny",
-        "bash": {
-          "*": "deny",
-          "br *": "allow",
-          // Destructive tracker operations keep the approval convention.
-          "br delete*": "ask",
-          "br close*": "ask",
-          // bv is robot-only; never interactive and never --no-db.
-          "bv --robot-*": "allow",
-          "bv *--no-db*": "deny"
-        },
-        "task": {
-          "*": "deny"
-        }
-      }
+      "permissions": [
+        { "action": "skill", "resource": "beads-br", "effect": "allow" },
+        { "action": "skill", "resource": "beads-bv", "effect": "allow" },
+        { "action": "shell", "resource": "*", "effect": "deny" },
+        { "action": "shell", "resource": "br *", "effect": "allow" },
+        { "action": "shell", "resource": "br delete*", "effect": "ask" },
+        { "action": "shell", "resource": "br close*", "effect": "ask" },
+        { "action": "shell", "resource": "bv --robot-*", "effect": "allow" },
+        { "action": "shell", "resource": "bv *--no-db*", "effect": "deny" },
+        { "action": "sqz_sqz_read_file", "resource": "*", "effect": "deny" },
+        { "action": "sqz_sqz_list_dir", "resource": "*", "effect": "deny" },
+        { "action": "sqz_sqz_grep", "resource": "*", "effect": "deny" },
+        { "action": "sqz_expand", "resource": "*", "effect": "deny" },
+        { "action": "question", "resource": "*", "effect": "deny" },
+        { "action": "todowrite", "resource": "*", "effect": "deny" },
+        { "action": "lsp", "resource": "*", "effect": "deny" }
+      ]
     },
-
     "composio": {
-      "description": "Dedicated Composio worker. Owns one entire external-app workflow end-to-end. No children, no web, no local mutations.",
-      "model": "openrouter/deepseek-v4.1-flash-1017",
-      "options": { "reasoningEffort": "low", "reasoningSummary": "auto" },
-      "temperature": 0.35,
+      "description": "Dedicated Composio worker. Owns one entire external-app workflow end-to-end through Code Mode. No children, no web, no local mutations.",
+      "model": { "providerID": "openrouter", "model": "deepseek-v4.1-flash-1017", "variant": "low" },
+      "request": { "body": { "temperature": 0.35 } },
       "mode": "subagent",
-      "permission": {
-        "read": {
-          "*": "allow",
-          "*.env": "ask",
-          "*.env.*": "ask",
-          "*.env.example": "allow"
-        },
-        "glob": "allow",
-        "grep": "allow",
-        "skill": "allow",
-        "composio_*": "allow",
-        "sqz_sqz_read_file": "deny",
-        "sqz_sqz_list_dir": "deny",
-        "sqz_sqz_grep": "deny",
-        "sqz_expand": "deny",
-        "question": "deny",
-        "todowrite": "deny",
-        "lsp": "deny",
-        "write": "deny",
-        "edit": "deny",
-        "patch": "deny",
-        "bash": "deny",
-        "websearch": "deny",
-        "websearch_cited": "deny",
-        "webfetch": "deny",
-        "context7_*": "deny",
-        "exa_*": "deny",
-        "gh_grep_*": "deny",
-        "duckduckgo_*": "deny",
-        "semble_*": "deny",
-        "ebay_*": "deny",
-        "home_assistant_*": "deny",
-        "tinyfish_search": "deny",
-        "retrieval_control": "deny",
-        "task": {
-          "*": "deny"
-        }
-      }
+      "permissions": [
+        { "action": "skill", "resource": "composio-google-sheets", "effect": "allow" },
+        { "action": "execute", "resource": "*", "effect": "allow" },
+        { "action": "composio_*", "resource": "*", "effect": "allow" },
+        { "action": "sqz_sqz_read_file", "resource": "*", "effect": "deny" },
+        { "action": "sqz_sqz_list_dir", "resource": "*", "effect": "deny" },
+        { "action": "sqz_sqz_grep", "resource": "*", "effect": "deny" },
+        { "action": "sqz_expand", "resource": "*", "effect": "deny" },
+        { "action": "question", "resource": "*", "effect": "deny" },
+        { "action": "todowrite", "resource": "*", "effect": "deny" },
+        { "action": "lsp", "resource": "*", "effect": "deny" },
+        { "action": "subagent", "resource": "*", "effect": "deny" },
+        { "action": "shell", "resource": "*", "effect": "deny" },
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "webfetch", "resource": "*", "effect": "deny" },
+        { "action": "websearch", "resource": "*", "effect": "deny" }
+      ]
     }
   }
 }

@@ -65,6 +65,8 @@ export type PolicyReason =
   | "resource_blocked"
   | "opaque_resource_unverifiable"
   | "batch_too_large"
+  | "native_search_provider_override"
+  | "native_search_provider_unavailable"
   | "persistence_degraded"
   | "reset_not_authorized"
   | "provider_not_found"
@@ -142,7 +144,7 @@ export type PersistenceHealth = {
 
 export type BlockedResource = {
   until: number;
-  reason: "access_denied" | "captcha";
+  reason: "auth" | "quota" | "access_denied" | "captcha";
   createdAt: number;
 };
 
@@ -211,16 +213,4 @@ export type ProviderAvailability = {
   keyConfigured?: boolean;
   cost: CostClass;
   rateRemaining?: { minute: number; hour: number; day: number };
-};
-
-/** The TinyFish REST adapter only needs this narrow slice of the engine. */
-export type TinyFishProviderBridge = {
-  availability(): ProviderAvailability;
-  consumeCall(): Promise<RateLimitResult>;
-  recordFailure(
-    category: ErrorCategory,
-    retryAfterMs?: number,
-    latencyMs?: number,
-  ): Promise<void>;
-  recordSuccess(latencyMs?: number): Promise<void>;
 };

@@ -1,99 +1,147 @@
 # Verification
 
-## Commands
+## Activation status
 
-Run from `~/.config/opencode`:
+**Loader/config activation: complete.**
+
+Observed during activation:
+
+- Both idle checks returned 0.
+- Exactly one `opencode reload`.
+- Existing 2.2.5 service PID 41900 stayed up unchanged; no restart or migration.
+- No searches, model calls, auth operations, session reads, or pushes.
+- Active exactly once each: local `retrieval-policy` (id `retrieval-policy`), local
+  `sqz` (id `sqz`), `@tarquinen/opencode-dcp@3.2.0` (id `opencode-dcp`), and
+  `cc-safety-net@2.7.2`.
+- No failed custom plugins.
+- `plugins.v2-staging/` removed; `plugins.1x-disabled/` retained.
+- Local entries are not double-listed in config.
+- Tests, typecheck, and config/service preflight were green. At the activation run the
+  suite reported 184 pass / 1 POSIX-only skip / 0 fail; this is a snapshot, not a
+  future guarantee.
+- MCP connected: `context7`, `DuckDuckGo`, `gh_grep`, `Semble`, `SQZ`. eBay disabled;
+  Composio needs authentication; Exa and Home Assistant absent because env
+  prerequisites are not met.
+- No credential values were read.
+
+Real model-turn, tool, and Code Mode smoke checks remain pending.
+
+## Safe checks
+
+These do not start/restart the service or read sessions:
 
 ```text
+opencode --version
+opencode --help
+opencode stats --help
+git status --short
+git diff --stat
+```
+
+Expected CLI identity: `opencode v2.2.5`.
+
+## Repository checks
+
+If the activated 2.2.5 tree still defines the package scripts:
+
+```text
+bun install
 bun run typecheck
 bun test
 bun run preflight -- --config
 ```
 
-Narrow checks after documentation-only changes:
-
-```text
-git status --short
-git diff --stat
-```
-
-Native checks:
-
-```text
-opencode --version
-opencode debug config
-opencode stats
-```
-
-## What preflight verifies
-
-`bun run preflight -- --config` is the environment contract:
-
-- `runtime.present` — `opencode --version`.
-- `bun.present` — Bun version.
-- `node.present` — Node version.
-- `package.sdk_pin` — `@opencode-ai/plugin` declared.
-- `sdk.installed` — installed SDK version.
-- `sdk.matches_pin` — installed SDK equals the pin.
-- `lock.authoritative_bun` — `bun.lock` exists.
-- `lock.package_lock_not_tracked` — `package-lock.json` is not tracked.
-
-With `--config`, it also parses `opencode debug config` and reports only top-level key
-presence and compaction keys. It never prints secret values.
-
-Expected healthy snapshot on this host:
-
-```text
-runtime 1.19.5, sdk_pin 1.19.5, sdk_installed 1.19.5
-bun 1.3.9, node v25.6.1
-runtime_matches_sdk true
-```
-
-A warning about `package-lock.json` existing but being ignored is expected; `bun.lock`
-remains authoritative.
-
-## Typecheck
-
-`tsconfig.json` includes `tests/**/*.ts`, `scripts/**/*.ts`, and `plugins/**/*.ts`.
-`lib/` is exercised through tests. Removing the dead `.opencode/` telemetry assets does
-not affect this include set.
-
-## Tests
-
-`bun test` runs the retrieval policy, TinyFish adapter, sqz compressor/plugin, config,
-permissions, and smoke suites. Tests use injected clocks, filesystems, clients, and
-fetch implementations where applicable; they must not perform live vendor calls.
+Do not freeze the activation test count as a contract. Re-run the commands and report
+the current result.
 
 ## Native usage
 
-`opencode stats` shows token and cost statistics:
+`opencode stats` is the supported read-only usage path in 2.2.5:
 
 ```text
-opencode stats [--days N] [--tools N] [--models [N]] [--project ""]
+opencode stats --days 7
+opencode stats --cost --models --tools --limit 20
+opencode stats --json
+opencode stats --all
 ```
 
-There is no native in-session token tool. Do not describe local plugin counters as
-native stats or as vendor billing.
+Flags: `--days`, `--year`, `--all`, `--project`, `--models`, `--tools`, `--cost`,
+`--full`, `--limit`, `--json`.
 
-## Manual checks
+It reports shareable usage statistics, not vendor billing. There is no in-session
+`tokenscope` or `context_usage` tool.
 
-- `opencode debug config` shows the resolved config.
-- Confirm the intended MCP entries are enabled and no credential value is printed.
-- Confirm `OPENCODE_CONFIG` (if used) actually merged the host overlay.
-- Confirm `sqz` is on `PATH` if the sqz MCP is expected to start.
-- Confirm Exa is enabled only when `EXA_API_KEY` is set.
-- Confirm TinyFish is unavailable without `TINYFISH_API_KEY` and does not affect
-  offline work.
+## Loader/config checklist (complete)
+
+- [x] Runtime reports `opencode v2.2.5`.
+- [x] One `opencode reload`; existing service stayed up.
+- [x] SDK packages are 2.2.5.
+- [x] `plugins/` is the single auto-discovery directory.
+- [x] Local plugins are not double-listed.
+- [x] `retrieval-policy` id loaded exactly once.
+- [x] `sqz` id loaded exactly once.
+- [x] DCP 3.2.0 loaded exactly once.
+- [x] `cc-safety-net` 2.7.2 loaded.
+- [x] No failed custom plugins.
+- [x] `plugins.v2-staging/` removed; `plugins.1x-disabled/` retained.
+- [x] Four legacy optional plugins remain disabled.
+- [x] `cli.json` is deliberately tracked.
+- [x] `service.json` / `service.jsonc` remain ignored and unprinted.
+- [x] `tui.json` remains historical.
+
+## Pending real smoke checks
+
+- [ ] Real model turn on the configured strong main.
+- [ ] Native OpenAI login, actual catalog model selection, and one entitlement call.
+- [ ] Retrieval tool call through the activated stack.
+- [ ] Code Mode: shared outer IDs, identity queues, permission-reply cleanup, sibling
+      outcomes retained.
+- [ ] Raw Code Mode `fetch` blocked; governed `webfetch` succeeds.
+- [ ] Native TinyFish live search (keyed/keyless as available).
+- [ ] Keyed Exa live search.
+- [ ] Composio MCP authentication and one workflow.
+- [ ] Old session reopened/attached through a new 2.2.5 client.
+- [ ] Actual wire provider, entitlement, cost, and billing observation.
+
+## Manual commands pending
+
+Composio MCP authentication:
+
+```text
+opencode mcp list
+opencode mcp auth [<name>]
+```
+
+`<name>` is optional; choose Composio from the picker. Do not claim old OAuth migrated.
+
+Native OpenAI:
+
+```text
+opencode auth login [<target>]
+opencode models
+opencode auth list [--format default|json]
+opencode auth switch [<target>] [<credential>]
+```
+
+`<target>` is optional and must not be guessed. After a real entitlement call, persist
+the exact catalog id only through an approved manual config change. No fabricated id or
+fallback promise.
 
 ## What is not verified
 
-- Upstream provider identity, plan, or billing for a configured model.
-- Exa/TinyFish free-tier terms beyond local caps.
-- ChatGPT Plus/Pro entitlement until a real call is made.
-- Host-specific paths on other machines.
-- Automatic loading of `opencode.private.local.json`.
+- Actual upstream wire provider, cost, or billing for any configured model.
+- Native OpenAI/ChatGPT subscription entitlement.
+- A real native OpenAI model id to persist.
+- TinyFish keyless vendor allowance or live success.
+- Exa keyed live success or paid-key behavior.
+- Composio authentication or workflow execution.
+- Real model-turn, tool, and Code Mode behavior after activation.
+- Session compatibility across a runtime downgrade.
 
 ## Failure handling
 
-If the same verification command fails twice, stop and report the error instead of
-retrying blindly. Keep changes small and reversible; restore only reviewed paths.
+If the same safe command fails twice, stop and report the error instead of retrying
+blindly. Keep changes small and reversible; restore only reviewed paths. Do not restart
+the service for documentation verification after a config-only reload. Environment
+changes are separate: apply them with an idle `opencode service restart` from the
+configured shell.

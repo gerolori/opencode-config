@@ -1,39 +1,60 @@
 # Architecture
 
-## Purpose
+## Runtime and service model
 
-`~/.config/opencode` is both the canonical source checkout and the live global config
-directory. Changes take effect for new sessions; a running session keeps its loaded
-plugins and config.
+This config runs on `@opencode/cli` **2.2.5** with `@opencode/plugin`,
+`@opencode/schema`, and `@opencode/client` at 2.2.5. `bun.lock` is authoritative.
+
+OpenCode uses the existing background service. Activation was completed with exactly
+one `opencode reload`; the existing service PID stayed unchanged. No restart or
+migration was performed.
+
+- An already-open session keeps the toolset it started with.
+- Reopen the session or attach through a new 2.2.5 client to pick up the activated
+  toolset.
+- Do not require a service restart after a config-only reload.
+- Environment changes are different: keys and host variables must reach the background
+  service's launch environment. Reopening only the TUI does not update the running
+  service; apply them with an idle `opencode service restart` from the configured shell.
+
+## Config shape
+
+Use the native 2.2.5 sections: `providers`, `agents`, `permissions`, `mcp.servers`,
+and `plugins`. `small_model` is unsupported and removed.
 
 ## Load path
 
-1. OpenCode reads `opencode.jsonc` from the config directory.
-2. Environment overlays can be added with `OPENCODE_CONFIG`. They merge over the base.
-3. `instructions/*.md` are always included.
-4. `AGENTS.md` is loaded as the global agent index.
-5. `agents/*.md` declare primary and subagent behavior.
+1. OpenCode reads the base config from the config directory.
+2. Host initialization adds default server entries only when they are absent.
+3. `instructions/*.md` are included.
+4. `AGENTS.md` is the global agent index.
+5. `agents/*.md` declare primaries and workers.
 6. `commands/*.md` declare slash commands.
-7. `plugins/*.ts` are auto-discovered. Files listed in the `plugin` array are external
-   packages, not local files.
-8. `skills/*/SKILL.md` are loaded on demand by the `skill` tool.
+7. Local plugins are discovered from the single active `plugins/` directory.
+8. Skills load on demand through the `skill` tool.
 
-Do not list `plugins/sqz.ts` or `plugins/retrieval-policy.ts` in `opencode.jsonc`; they
-load by discovery.
+Do not list local plugin files in the config `plugins` array; they are active exactly
+once through discovery.
 
-## Config layers
+## Plugin layout
 
-- `opencode.jsonc` — base, portable, tracked.
-- `opencode.host.example.jsonc` — tracked example overlay for host-local MCP paths.
-- `opencode.private.local.json` — ignored host override for this machine. As of this
-  writing OpenCode does **not** load it automatically; pass it through
-  `OPENCODE_CONFIG` (or use the example overlay with environment variables).
-- Environment variables — keys and host paths only.
+| Path | Role |
+| --- | --- |
+| `plugins/` | single active auto-discovery directory |
+| `plugins.1x-disabled/` | retained 1.x archive; not loaded |
 
-Base Semble and eBay entries stay disabled. Semble requires a host path on Windows.
-The preferred final behavior is a HOME-derived auto-enable or an explicit local
-override, decided after the final integration files are reviewed. Do not hard-code a
-machine path into tracked config.
+`plugins.v2-staging/` has been removed.
+
+Active exactly once each:
+
+- local `plugins/retrieval-policy.ts` — id `retrieval-policy`
+- local `plugins/sqz.ts` — id `sqz`
+- `@tarquinen/opencode-dcp@3.2.0` — id `opencode-dcp`
+- `cc-safety-net@2.7.2`
+
+No failed custom plugins. The four legacy optional plugins remain disabled: table
+formatter, smart title, unmoji, ntfy. Native features are not claimed to restore their
+functionality.
 
 ## Delegation model
 
@@ -49,69 +70,120 @@ build / plan
   -> composio
 ```
 
-Rules enforced by config and the retrieval plugin:
-
-- `subagent_depth` is 1.
-- A child cannot call `task`.
-- Only `build` and `plan` can spawn children.
-- `code`, `review`, `explore`, `fetch`, `track`, and `composio` have `task: deny`.
+- `build` and `plan` are the only user-selectable primaries.
+- Six cheap pinned workers: `code`, `review`, `explore`, `fetch`, `track`, `composio`.
+- `general` is absent.
 - There is no `research` agent and no replacement layer.
-- Only `fetch` has external retrieval tools.
-- `track` is restricted to `br` / `bv`.
-- `composio` owns one external-app workflow end-to-end and has no web or child access.
+- `subagent_depth` is 1; all workers have no children.
+- Worker model pins are independent of the primary and must not be changed on resume
+  unless the actual 2.x behavior is explicitly verified.
 
 ## Permissions
 
-The global posture is deny-by-default for external surfaces. Each agent re-allows only
-its own surface; the last matching rule wins.
+The posture is deny-by-default for unknown tools, with explicit local and role-specific
+allows. The last matching rule wins.
 
-- `build` / `plan` cannot edit or run shell directly. They delegate.
-- `code` can read, write, edit, patch, and run shell.
+- `build` / `plan` cannot edit or run shell directly; they delegate. Both allow
+  `compress`, `customize-opencode`, and `todowrite`.
+- `build` retains the authorized Home Assistant exception; `plan` does not.
+- `code` can read, write, edit, patch, and run shell. Its shell allowlist denies obvious
+  direct web-fetch commands (`curl`, `wget`, `Invoke-WebRequest`, `Invoke-RestMethod`,
+  `iwr`, `irm`, `Start-BitsTransfer`, `git clone`). This is **not** a network jail:
+  package installs and language tooling can still reach the network.
 - `review` is read-only, with a narrow `git status` / `git diff` / `git log` shell
   allowlist.
 - `explore` is read-only and may use local Semble; remote git repo URLs are rejected.
-- `fetch` is the only agent with `websearch`, `webfetch`, `context7_*`, `exa_*`,
-  `gh_grep_*`, `duckduckgo_*`, `tinyfish_search`, and `retrieval_control`.
-- `track` may run `br` / `bv`; `br delete` and `br close` ask for approval.
+- `fetch` is the only agent with external retrieval surfaces. It may call
+  `retrieval_control` for `status` only.
+- `track` may run `br` and robot-only `bv --robot-*`; `bv ... --no-db` is denied.
+  Destructive `br` operations keep the approval convention.
 - `composio` may use `composio_*` only.
+- Unknown MCP namespaces are denied for all agents by default.
 
 ## Compaction
 
-Native compaction is enabled with `preserve_recent_tokens: 40000` and
-`reserved: 100000`. DCP runs with its own defaults (`dcp.jsonc`). Do not tune either
-mid-task without evidence.
+Native compaction remains enabled. DCP 3.2.0 keeps the existing `dcp.jsonc` shape:
+min/max is a soft-nudge band, not a hard prune. Do not tune it mid-task without
+evidence.
 
-## Plugins
+## SQZ
 
-### sqz
+SQZ is a retained local plugin plus the SQZ MCP. Compression is output-only in the
+native `execute.after` path:
 
-`plugins/sqz.ts` does not rewrite shell commands. The shell tool runs exactly as
-requested and the already-captured output is compressed in `tool.execute.after`, so
-exit codes and stdout/stderr metadata are preserved. The MCP command is currently
-`["sqz-mcp.exe"]`, which relies on `PATH`; this is a Windows-specific selection and is
-still owned by the integration work.
+- structured shell output and exit metadata are preserved;
+- only model-visible successful content is compressed;
+- commands are never rewritten;
+- a hard deadline falls back to the original output.
 
-### retrieval-policy
+Do not add RTK or a second compressor. The primary needs the `compress` permission.
 
-`plugins/retrieval-policy.ts` owns per-session retrieval budgets, provider circuits,
-error classification, direct TinyFish search, Exa enablement, and metadata-only local
-state. See `docs/retrieval.md`.
+## Native provider catalog and TinyFish
+
+The native catalog still lists `exa`, `firecrawl`, `parallel`, `tavily`, and `tinyfish`.
+It is not restricted or reduced by this config.
+
+- The public promise adapter exposes only `add` and `default`, not `list` or `remove`.
+- The plugin discovers TinyFish through `websearch.providers` and pins the supported
+  default with `default.set('tinyfish')`.
+- Other native providers are not removed.
+- The native builtin tool accepts only `query`; explicit overrides are denied.
+- A wrong-provider result or error disables native search without poisoning TinyFish.
+- A real `fromPromise` adapter test exists.
+
+## Code Mode
+
+- Code Mode leaves shared outer IDs.
+- Identity queues handle normal and permission-reply cleanup while retaining sibling
+  outcomes.
+- Raw `fetch` is blocked; page reads must use the governed `webfetch`.
+- A direct/plain permission reject can emit no after hook.
+- Cleanup uses permission events plus TTL fallback and hard interrupt.
+
+## Host defaults and credentials
+
+Host initialization adds Exa, Semble, and Home Assistant defaults **only when those
+server entries are absent**. Explicit entries are preserved, including
+`disabled: true` and custom commands/URLs.
+
+- `opencode.host.example.jsonc` sets Semble `disabled: true` by default.
+- `OPENCODE_DISABLE_SEMBLE=1` is a real one-way kill switch, even for an explicit
+  enabled entry.
+- Exa requires `EXA_API_KEY`.
+- Semble requires a valid local project directory (env override or
+  `~/mcp-servers/semble`), unless the kill switch is set.
+- Home Assistant requires both `HA_MCP_URL` and `HA_BEARER_TOKEN`; there is no personal
+  fallback URL.
+- eBay stays disabled pending diagnosis.
+
+Headers stay in memory, never source or logs. `service.json` / `service.jsonc` may
+contain service credentials; they are ignored and must never be committed, printed, or
+copied. `cli.json` is deliberately tracked public UI configuration. `tui.json` is
+historical; do not assume it is the active location.
+
+## MCP status
+
+Connected: `context7`, `DuckDuckGo`, `gh_grep`, `Semble`, `SQZ`.
+
+- eBay disabled.
+- Composio needs authentication under 2.2.5; old OAuth is not claimed migrated or
+  connected.
+- Exa and Home Assistant are absent because env prerequisites are not met.
 
 ## Repository hygiene
 
 - `memory/` is ignored.
 - `opencode.private.local.json`, `notification-ntfy.json`, `auth.json`, `.env*`,
-  `*.bak`, and logs are ignored.
+  `*.bak`, logs, and service credential files are ignored.
 - Operational retrieval state lives outside Git in
   `~/.local/share/opencode/retrieval/` (or `$XDG_STATE_HOME/opencode/retrieval`).
-- Never commit personal memory, keys, auth stores, or host-local paths.
+- Never commit personal memory, keys, auth stores, service credentials, or host paths.
 
-## Cross-file assumptions
+## Cross-file facts
 
-- Local plugin discovery from `plugins/` remains in effect.
-- `opencode.private.local.json` must be explicitly loaded until automatic host overlay
-  support is confirmed.
-- `sqz-mcp.exe` or a future portable command must exist on `PATH`.
-- The exa base entry must keep its header/env wiring for the plugin's enable switch to
-  be meaningful.
-- The script and tests under `scripts/` and `tests/` are the verification contract.
+- The activated tree uses one auto-discovery directory (`plugins/`) and does not
+  double-list local plugins.
+- Host defaults only fill absent server entries; explicit entries win.
+- Native OpenAI subscription selection is a manual user step and is not assumed.
+- Old sessions must be reopened/attached to pick up the new toolset.
+- Real model-turn, tool, and Code Mode smoke checks remain pending.

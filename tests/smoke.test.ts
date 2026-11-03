@@ -1,66 +1,84 @@
 import { describe, expect, test } from "bun:test";
-import { tool } from "@opencode-ai/plugin";
-import { z } from "zod";
+import { Plugin } from "@opencode/plugin";
+import type { Agent } from "@opencode/schema/agent";
+import type { Session } from "@opencode/schema/session";
+import type { SessionMessage } from "@opencode/schema/session-message";
+import type { Tool } from "@opencode/schema/tool";
 import pkg from "../package.json";
-import type { Event, Session, ToolPart } from "@opencode-ai/sdk";
-import { failedToolError, isFailedToolEvent, sessionParentID } from "./helpers/events";
+import {
+  callIdentity,
+  isToolErrorOutcome,
+  sessionParentID,
+  toolErrorOf,
+  type ExecuteAfterEvent,
+} from "./helpers/events";
 
-const echo = tool({
-  description: "Echo input",
-  args: { text: z.string() },
-  async execute(args) {
-    return { title: "echo", output: args.text };
-  },
-});
+const PINNED = ["@opencode/client", "@opencode/plugin", "@opencode/schema"] as const;
 
-describe("plugin tool harness", () => {
-  test("tool() exposes description/args/execute", () => {
-    expect(echo.description).toBe("Echo input");
-    expect(typeof echo.execute).toBe("function");
-  });
-
-  test("execute returns a ToolResult object", async () => {
-    const result = await echo.execute({ text: "hi" }, {} as never);
-    expect(result).toEqual({ title: "echo", output: "hi" });
-  });
-
-  test("SDK pin is exact (no semver range)", () => {
-    expect(pkg.dependencies["@opencode-ai/plugin"]).toMatch(/^\d+\.\d+\.\d+$/);
-  });
-});
-
-describe("event shape helpers", () => {
-  const failedToolPart = {
-    id: "part_1",
-    sessionID: "ses_child",
-    messageID: "msg_1",
-    type: "tool",
-    callID: "call_1",
-    tool: "task",
-    state: { status: "error", input: {}, error: "boom", time: { start: 1, end: 2 } },
-  } satisfies ToolPart;
-
-  const failedEvent = {
-    type: "message.part.updated",
-    properties: { part: failedToolPart },
-  } satisfies Event;
-
-  test("failed tool outcomes are visible via message.part.updated", () => {
-    expect(isFailedToolEvent(failedEvent)).toBe(true);
-    if (isFailedToolEvent(failedEvent)) {
-      expect(failedToolError(failedEvent.properties.part)).toBe("boom");
-      expect(failedEvent.properties.part.sessionID).toBe("ses_child");
-      expect(failedEvent.properties.part.callID).toBe("call_1");
+describe("2.2.5 toolchain pins", () => {
+  test("pins the actual 2.2.5 packages exactly", () => {
+    for (const name of PINNED) {
+      expect(pkg.devDependencies[name]).toMatch(/^2\.2\.5$/);
     }
   });
 
-  test("non-tool events are rejected", () => {
-    const idle = { type: "session.idle", properties: { sessionID: "ses_1" } } satisfies Event;
-    expect(isFailedToolEvent(idle)).toBe(false);
+  test("obsolete 1.x SDK is absent", () => {
+    const deps = pkg.devDependencies as Record<string, string | undefined>;
+    expect(deps["@opencode-ai/plugin"]).toBeUndefined();
   });
 
-  test("task-session parent lookup uses Session.parentID", () => {
-    const child = { id: "ses_child", parentID: "ses_parent" } as Session;
+  test("Plugin.define is available", () => {
+    expect(typeof Plugin.define).toBe("function");
+  });
+});
+
+describe("tool hook contracts", () => {
+  const identity = {
+    tool: "task",
+    sessionID: "ses_child" as Session.ID,
+    agent: "code" as Agent.ID,
+    messageID: "msg_1" as SessionMessage.ID,
+    id: "call_1" as Tool.CallID,
+    input: { prompt: "x" },
+  };
+
+  const completed: ExecuteAfterEvent = {
+    ...identity,
+    status: "completed",
+    result: { output: "ok" },
+  };
+
+  const failed: ExecuteAfterEvent = {
+    ...identity,
+    status: "error",
+    error: { message: "boom" } as unknown as Tool.Error,
+  };
+
+  test("per-leaf identity is preserved", () => {
+    expect(callIdentity(identity)).toEqual({
+      tool: "task",
+      sessionID: "ses_child",
+      agent: "code",
+      messageID: "msg_1",
+      id: "call_1",
+    } as unknown as typeof identity);
+  });
+
+  test("status:error is detected and carries Tool.Error", () => {
+    expect(isToolErrorOutcome(failed)).toBe(true);
+    expect(toolErrorOf(failed)?.message).toBe("boom");
+    expect(String(failed.id)).toBe("call_1");
+  });
+
+  test("status:completed is not an error outcome", () => {
+    expect(isToolErrorOutcome(completed)).toBe(false);
+    expect(toolErrorOf(completed)).toBeUndefined();
+  });
+});
+
+describe("session parent identity", () => {
+  test("Session.Info.parentID identifies child/task sessions", () => {
+    const child = { id: "ses_child", parentID: "ses_parent" } as Session.Info;
     expect(sessionParentID(child)).toBe("ses_parent");
   });
 });

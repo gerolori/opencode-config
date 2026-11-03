@@ -23,14 +23,14 @@
     "nudgeFrequency": 3,
     "iterationNudgeThreshold": 12,
     "nudgeForce": "soft",
-    "protectedTools": ["task", "skill", "read", "glob", "grep", "edit", "write"],
+    "protectedTools": ["task", "subagent", "skill", "read", "glob", "grep", "edit", "write"],
     "protectTags": true,
     "protectUserMessages": true
   },
   "strategies": {
     "deduplication": {
       "enabled": true,
-      "protectedTools": ["task", "skill", "edit", "write"]
+      "protectedTools": ["task", "subagent", "skill", "edit", "write"]
     },
     "purgeErrors": {
       "enabled": true,

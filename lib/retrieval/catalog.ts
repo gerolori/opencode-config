@@ -21,13 +21,6 @@ const EXACT: Readonly<Record<string, ToolClassification>> = {
     cost: "free",
     external: true,
   },
-  tinyfish_search: {
-    tool: "tinyfish_search",
-    kind: "search",
-    provider: "tinyfish",
-    cost: "free_bounded",
-    external: true,
-  },
   exa_web_search_exa: {
     tool: "exa_web_search_exa",
     kind: "search",
@@ -56,16 +49,32 @@ const EXACT: Readonly<Record<string, ToolClassification>> = {
     cost: "free",
     external: true,
   },
+  // 2.x effective MCP names sanitize non-alphanumeric characters.
+  context7_resolve_library_id: {
+    tool: "context7_resolve_library_id",
+    kind: "search",
+    provider: "context7",
+    cost: "free",
+    external: true,
+  },
+  context7_query_docs: {
+    tool: "context7_query_docs",
+    kind: "search",
+    provider: "context7",
+    cost: "free",
+    external: true,
+  },
 
-  // Built-in search has an unknown/paid/unbounded backend. Deny by default.
+  // The native 2.x websearch tool is bound to the host-selected provider.
+  // The staging policy only accepts the confirmed native TinyFish provider.
   websearch: {
     tool: "websearch",
     kind: "search",
-    provider: "builtin_websearch",
-    cost: "unknown_maybe_paid",
+    provider: "tinyfish",
+    cost: "free_bounded",
     external: true,
-    denyReason: "unknown_builtin_search_backend",
   },
+  // Legacy/unknown built-in variant remains fail-closed.
   websearch_cited: {
     tool: "websearch_cited",
     kind: "search",

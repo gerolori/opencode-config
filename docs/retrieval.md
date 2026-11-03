@@ -2,95 +2,126 @@
 
 ## Scope
 
-External retrieval is restricted to the `fetch` agent. `fetch` is budgeted by
-`plugins/retrieval-policy.ts` and its implementation under `lib/retrieval/`. The
-plugin makes no MCP calls itself; it registers two custom tools and gates the
-MCP-backed tools that other configs expose.
+External retrieval is restricted to the `fetch` agent. `fetch` is budgeted by the
+retrieval policy plugin and its implementation. The plugin makes no MCP calls itself;
+it governs the normal tools the agent calls, enforces caps/circuits/roles, and returns
+advisory `allowedNextProviders`.
 
-## Custom tools
+The plugin is **not** a network sandbox and is **not** a general automatic-memory
+detector.
 
-### `retrieval_control`
+## `retrieval_control`
 
 ```text
-retrieval_control({ action: "status" | "extend", session_id?: string })
+retrieval_control({
+  action: "status" | "extend" | "reset_provider",
+  session_id?: string,
+  provider?: "duckduckgo" | "tinyfish" | "exa" | "gh_grep" | "context7" |
+             "builtin_webfetch" | "semble"
+})
 ```
 
-- `status` returns limits, remaining budget, blocked counts, provider availability,
-  provider cost class, suggested next providers, persistence health, and an optional
-  runtime usage snapshot.
-- `status` defaults to the caller's session. A `build` / `plan` parent may name a
-  direct child.
-- `extend` is `build` / `plan` only. It requires a direct child `session_id`, grants
-  +3 searches and +3 reads once, and refuses self-targets, non-children, unknown
-  sessions, and repeated extensions.
+- `status` — caller's own session by default. A `build` / `plan` parent may target a
+  direct child. `fetch` may call only `status`.
+- `extend` — root `build` / `plan` only, direct child only, once. Grants +3 searches
+  and +3 reads. Self-targets, non-children, unknown sessions, and repeats are refused.
+- `reset_provider` — root `build` / `plan` only. Requires one of the named providers.
+  Clears cooldown, operator-required state, last error category, and consecutive
+  failures. It preserves TinyFish rate counters, provider totals, resource blocks, and
+  every session budget. A `fetch` child cannot reset or self-extend.
 - The result marks attempt counts as local, not vendor billing.
 
-### `tinyfish_search`
+## Native catalog and TinyFish
 
-```text
-tinyfish_search({ query: string, max_results?: number })
-```
+The native provider catalog still lists `exa`, `firecrawl`, `parallel`, `tavily`, and
+`tinyfish`. This config does not restrict or remove those entries.
 
-- `query` is 1–2000 characters.
-- `max_results` is 1–5; the default is 5.
-- Only the `fetch` agent may call it; other agents get an error.
-- The adapter performs a direct `GET https://api.search.tinyfish.ai` with an
-  `X-API-Key` header from `TINYFISH_API_KEY`.
-- It returns `{ url, title, snippet }` records with `evidence_type=snippet`.
-- It never calls TinyFish Agent, Browser, MCP, or wallet APIs.
-- Timeouts default to 8s and are capped at 15s. Responses are capped at 256 KiB.
-- It never fetches full pages.
+- The public promise adapter exposes only `add` and `default` — not `list` or `remove`.
+- The plugin discovers TinyFish through `websearch.providers` and pins the supported
+  default with `default.set('tinyfish')`.
+- It does not remove the other native providers.
+- The native builtin tool accepts only `query`; explicit provider overrides are denied.
+- A wrong-provider result or error disables native search without poisoning TinyFish.
+- A real `fromPromise` adapter test exists.
+- The custom TinyFish HTTP adapter was removed.
+
+TinyFish specifics:
+
+- Optional `TINYFISH_API_KEY`.
+- Keyless is supported under local safeguards.
+- No vendor keyless allowance or live success is verified.
+- Local protective counters: 30/minute, 500/hour, 12,000/day. These are guards, not a
+  quota promise.
+
+Key page: `https://agent.tinyfish.ai/api-keys`.
 
 ## Budgets
 
-Per child `fetch` session:
+Per child `fetch` assignment:
 
 - 3 searches
 - 3 page reads
 
-A single extension adds 3 and 3. The parent calls `retrieval_control` with
-`action=extend` and the child's session ID, then resumes the child. Budgets are
-per-session, persisted locally, and reset with a new session.
+One `build` / `plan`-approved extension adds 3 and 3, then the child resumes.
+
+Blocked attempts count against the budget intentionally. `status.remaining` is clamped
+at zero and never reports a negative remainder.
 
 ## Provider order
 
-At most two distinct providers are allowed per normalized query. Candidate lists are
-intentionally finite so a failure cannot turn into a tour of every free service.
+At most 2 distinct providers are allowed per normalized query/URL. Provider order is
+**advisory**: the policy returns suggested next providers, but the agent executes the
+normal tools and the policy enforces caps, circuits, and role.
 
-- General search: DuckDuckGo, TinyFish, gh_grep, Context7, Exa.
-- Semantic search: Exa, DuckDuckGo, TinyFish, gh_grep, Context7.
-- Page reads: built-in `webfetch`, DuckDuckGo, Exa.
+- General discovery: DuckDuckGo, then native TinyFish.
+- Semantic: keyed Exa MCP, then one healthy alternative.
+- Page reads: governed `webfetch`.
 
-In practice: DuckDuckGo first, TinyFish next if DuckDuckGo is unavailable or weak;
-semantic queries prefer Exa and then one healthy alternative.
+## Query and retry durability
 
-## Denials
+- Per-assignment provider sets are hashed and durable in the session state.
+- One bounded transient retry is tracked durably across process restarts.
+- Governance TTL is 24 hours, bounded to 32 query-provider records and 16 retry
+  records per session. The 3/6 budgets persist independently.
+- Maximum 2 providers per normalized query/URL.
+- No auth, quota, access-denial, or CAPTCHA retry loops. Only one bounded transient
+  retry is allowed.
 
-- Native `websearch` and `websearch_cited` are denied by default because the backend
-  is unknown, possibly paid, and unbounded.
-- Paid or unbounded Exa products (company research, LinkedIn search, deep researcher)
-  are denied.
-- Unclassified tools from known retrieval namespaces are denied by default.
-- Remote git/HTTP URLs passed to local Semble `repo` are rejected.
-- Only one transient retry is allowed; auth, quota, CAPTCHA and access-denial failures
-  are reported, not retried or bypassed.
-- A blocked URL stays blocked while the block is active; switching extractors does not
-  bypass it.
+## Reads and batches
 
-## Provider failures
+- A valid batch counts one read per URL.
+- At most 3 reads are allowed per call; over-budget batches are rejected, not truncated.
+- An invalid/malformed batch costs one blocked attempt.
+- Opaque expansion tokens are denied because the policy cannot verify the target URL.
+  This includes opaque DuckDuckGo expand tokens.
+- Page reads must use the governed `webfetch`.
 
-Failures are classified as `auth`, `quota`, `captcha`, `access_denied`, `transient`,
-or `unknown`. The engine opens provider circuits and records metadata only.
+## Blocked resources and errors
 
-Persistence is fail-closed for external retrieval: if state cannot be saved, external
-calls are denied rather than silently resetting budgets.
+- A normal read `403` or CAPTCHA blocks that URL, not the whole provider.
+- Other URLs remain eligible.
+- Do not switch extractors for a blocked URL while the block is active.
+- Errors are classified only from structured tool error metadata, not generic page
+  prose.
+
+## Code Mode
+
+Code Mode leaves shared outer IDs. Identity queues handle normal and permission-reply
+cleanup while retaining sibling outcomes.
+
+- The outer `execute` is not counted as a search or read.
+- Each governed MCP leaf is counted.
+- Raw Code Mode `fetch()` is blocked by the permission guard; page reads must use the
+  governed `webfetch`.
+- A direct/plain permission reject can emit no after hook.
+- Cleanup uses permission events plus TTL fallback and hard interrupt.
 
 ## State
 
 Metadata-only state:
 
-- `state.json` — session budgets, provider circuits, hashed blocked resources.
-- `events.jsonl` — bounded event log.
+- `state.json` — budgets, circuits, hashed provider/retry records, hashed blocked URLs.
+- `events.jsonl` — bounded metadata event log.
 
 Location:
 
@@ -100,45 +131,36 @@ $XDG_STATE_HOME/opencode/retrieval
 ~/.local/share/opencode/retrieval
 ```
 
-Session IDs and blocked resource keys are hashed. The state is operational, outside
-Git, and not shared between hosts.
+Safety properties:
 
-## TinyFish
-
-TinyFish is not a native MCP server in OpenCode 1.19.5. The custom tool is the whole
-integration.
-
-- Key: `TINYFISH_API_KEY` from `https://agent.tinyfish.ai/api-keys`.
-- Free plan caps enforced locally: 30/minute, 500/hour, 12,000/day.
-- Snippets only; no full-page extraction, no TinyFish Agent or Browser.
-- Free-tier terms can change; re-check the vendor dashboard.
+- Atomic, locked reload → mutate → save across processes.
+- Live PID locks are not stolen; stale locks are bounded; contention fails closed.
+- Directories use `0700` and files `0600` where the platform supports it; this is
+  best-effort on Windows.
+- Events contain no queries, URLs, raw arguments, raw session IDs, page content, or
+  secrets.
+- State is outside Git and per-host, not a shared cache.
 
 ## Exa
 
-- Base config: `enabled: false`, `oauth: false`,
-  `headers: { "x-api-key": "{env:EXA_API_KEY}" }`.
-- The plugin's `config` hook sets `enabled` to whether `EXA_API_KEY` is non-empty and
-  keeps `oauth` false. It never writes the key.
+- Keyed Exa MCP only. Requires `EXA_API_KEY`.
+- The Exa MCP entry is currently absent because the environment prerequisite is not met.
 - Key page: `https://dashboard.exa.ai/api-keys`.
-- Free plan is described as a recurring credit with no card and no automatic recharge.
-  Do not guarantee that if the user brings a paid key.
-- Exa tools are `free_tier_then_paid`; paid-tier behavior is the account owner's
-  responsibility.
+- Free plan: recurring credit, no card, auto-recharge off.
+- Do not claim the free arrangement is guaranteed for a paid key; that account's
+  billing applies.
+- Paid or unbounded Exa products are denied by policy.
 
-## Other providers
+## Denials and limits
 
-- `context7` — library/API documentation, free.
-- `gh_grep` — public code search, free.
-- `duckduckgo` — general search and page reads, free.
-- Built-in `webfetch` — page reads, free.
-- `semble` — local code retrieval for `explore` only, never external.
+- Native web search with an unknown/paid/unbounded backend is denied.
+- Unclassified tools from known retrieval namespaces are denied by default.
+- Paid or unbounded Exa research products are denied.
+- Remote git/HTTP references are rejected for local Semble.
+- The plugin cannot detect every possible retrieval tool; known namespaces fail closed.
 
-## Limitations
+## Memory boundary
 
-- Budget and circuit counts are local attempts, not vendor-side quotas or invoices.
-- The plugin cannot detect every possible retrieval tool; it fails closed for known
-  namespaces and common web-search names.
-- Provider ordering is a preference, not a guarantee. Availability, keys, and
-  circuits determine what actually runs.
-- The plugin has no memory feature. Retrieval failure counts are not memory
-  candidates and must not be treated as an automatic lesson detector.
+Retrieval failure counts and provider health are operational telemetry. They are not
+memory candidates, and no plugin here classifies or auto-writes lessons. Memory capture
+remains the prompt and human approval workflow in `docs/memory.md`.
