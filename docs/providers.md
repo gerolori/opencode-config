@@ -89,10 +89,22 @@ TinyFish:
   billing applies.
 - Paid or unbounded Exa products are denied by retrieval policy.
 
+## eBay
+
+- Local, read-only eBay Browse API server for `EBAY_IT`; tools are
+  `ebay_search_listings`, `ebay_price_summary`, and `ebay_get_item`.
+- Only `fetch` may call them. They are budgeted as external retrieval:
+  `search_listings` and `price_summary` consume one search; `get_item` consumes one
+  read. Unknown `ebay_*` tools fail closed.
+- Requires a valid local project (`EBAY_MCP_DIR` or `~/mcp-servers/ebay`) and both
+  `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` in the service environment.
+- Status: configured and conditionally available, **not verified**. Historical eBay
+  errors remain undiagnosed; no live call or account action was performed.
+
 ## Composio
 
 - Connected MCPs at activation: `context7`, `DuckDuckGo`, `gh_grep`, `Semble`, `SQZ`.
-- eBay is disabled.
+- eBay is configured, conditionally available, and not verified.
 - Composio **needs authentication** under 2.2.5. Old OAuth is not claimed migrated or
   connected.
 - Manual command: `opencode mcp auth [<name>]` with the optional name; choose Composio.

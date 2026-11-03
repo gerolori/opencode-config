@@ -17,6 +17,7 @@ export type ProviderId =
   | "builtin_webfetch"
   | "builtin_websearch"
   | "semble"
+  | "ebay"
   | "unknown";
 
 export type CostClass =

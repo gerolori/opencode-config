@@ -241,9 +241,22 @@ promise automatic fallback.
 
 ## MCP status
 
-Connected: `context7`, `DuckDuckGo`, `gh_grep`, `Semble`, `SQZ`.
+Previously observed connected (not re-verified in this change): `context7`,
+`DuckDuckGo`, `gh_grep`, `Semble`, `SQZ`. Semble remains host-auto-detected; this
+change did not force-enable it or bypass its explicit-disable/kill-switch handling.
 
-- eBay is disabled.
+- **Configured / available / verified** are distinct. "Configured" means an entry
+  exists; "available" means policy-eligible (prerequisites and credentials present in
+  the service environment, no active circuit); "verified" means a live call succeeded.
+  `retrieval_control` reports these as `key_configured` / `connector_status`
+  (`not_configured`, `configured_unverified`, `live_success_recorded`). Do not promote
+  a connector on configuration alone.
+- eBay: configured entry, conditionally available. Host initialization resolves the
+  tracked placeholder and enables it only when the local project exists and both
+  `EBAY_CLIENT_ID` and `EBAY_CLIENT_SECRET` are present in the service environment.
+  It is **not verified**: no live eBay call has been made here, and the historical
+  eBay errors (previously 108 retained errors) remain **undiagnosed**. Do not claim the
+  connector works until a live read-only test succeeds.
 - Composio **needs authentication** under 2.2.5. Old OAuth is not claimed migrated or
   connected. Use `opencode mcp auth [<name>]` (name optional; choose Composio).
 - Exa and Home Assistant are absent because their environment prerequisites are not
@@ -279,9 +292,10 @@ hosts, or enable automatic signups/payments.
 
 ## Host defaults
 
-Host initialization adds Exa, Semble, and Home Assistant defaults **only when those
-server entries are absent**. Explicit entries are preserved, including `disabled: true`
-and custom commands/URLs.
+Host initialization adds Exa, Semble, eBay, and Home Assistant defaults **only when
+those server entries are absent**. Explicit entries are preserved, including
+`disabled: true` and custom commands/URLs, except the tracked eBay placeholder, which
+is enabled only when its local project and both credentials exist.
 
 - `opencode.host.example.jsonc` sets Semble `disabled: true` by default.
 - `OPENCODE_DISABLE_SEMBLE=1` is a real one-way kill switch, including for an explicit
@@ -293,8 +307,12 @@ and custom commands/URLs.
 - Home Assistant requires **both** `HA_MCP_URL` and `HA_BEARER_TOKEN`; there is no
   personal fallback URL, and it is currently absent because the env prerequisites are
   not met.
-- eBay stays disabled pending diagnosis.
-- Headers are kept in memory only, never written to source or logs.
+- eBay requires a valid local project directory (`EBAY_MCP_DIR` or
+  `~/mcp-servers/ebay`) **and** both `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` in the
+  service environment. `OPENCODE_DISABLE_EBAY=1` is the one-way kill switch. Missing
+  prerequisites leave the entry disabled and do not block startup.
+- Header and credential values are used in memory only, never written to source or
+  logs.
 
 `opencode.private.local.json` is optional and not required for the connected Semble
 instance on this host.

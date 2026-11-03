@@ -3,31 +3,26 @@
   // Host-local MCP example for OpenCode 2.x. Load it with OPENCODE_CONFIG;
   // opencode merges it over the base config. It contains no credentials.
   //
-  // Set SEMBLE_MCP_DIR / EBAY_MCP_DIR to forward-slash paths, for example:
+  // Set host paths to forward-slash values, for example:
   //   SEMBLE_MCP_DIR=C:/Users/me/mcp-servers/semble
   //   EBAY_MCP_DIR=C:/Users/me/mcp-servers/ebay
+  // eBay itself is host-added when its project and both credentials exist.
   "mcp": {
     "servers": {
       "semble": {
         "type": "local",
         "command": ["uv", "--directory", "{env:SEMBLE_MCP_DIR}", "run", "semble"],
         // Disabled by default: loading this example without SEMBLE_MCP_DIR
-        // must not launch an empty command. Host detection adds Semble when
-        // the entry is absent and the local project is valid.
+        // must not launch an empty command. Because an explicit entry wins,
+        // this overlay intentionally suppresses Semble auto-detection. Omit
+        // this entry, or set disabled:false with a valid directory, to use it.
         "disabled": true,
         "codemode": true
-      },
-      "ebay": {
-        "type": "local",
-        "command": ["uv", "--directory", "{env:EBAY_MCP_DIR}", "run", "ebay-mcp"],
-        "environment": {
-          "EBAY_CLIENT_ID": "{env:EBAY_CLIENT_ID}",
-          "EBAY_CLIENT_SECRET": "{env:EBAY_CLIENT_SECRET}",
-          "EBAY_ENV": "{env:EBAY_ENV}"
-        },
-        "disabled": true,
-        "codemode": false
       }
+      // eBay is intentionally not pinned here. An explicit entry would win
+      // over host detection; host initialization adds eBay only when its local
+      // project and both credentials exist in the service environment.
+      // Do not pin a disabled placeholder in a host overlay.
     }
   }
 }

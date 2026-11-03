@@ -32,6 +32,7 @@ const controlInput = {
         "context7",
         "builtin_webfetch",
         "semble",
+        "ebay",
       ],
     },
   },
@@ -111,10 +112,14 @@ export const RetrievalPolicyPlugin = Plugin.define({
   async setup(context) {
     const stateDir =
       typeof context.options?.stateDir === "string" ? context.options.stateDir : undefined;
+    const options = asRecord(context.options);
+    // Tests and embedded hosts may inject a hermetic environment. Production
+    // falls back to the service process environment.
+    const env = asRecord(options?.env) ?? process.env;
 
     const engine = new RetrievalEngine({
       stateDir,
-      env: process.env,
+      env: env as Record<string, string | undefined>,
       nativeSearchAvailable: false,
       sessionLookup: {
         async get(sessionID: string): Promise<SessionInfo | undefined> {
@@ -533,7 +538,7 @@ export const RetrievalPolicyPlugin = Plugin.define({
           name: "retrieval_control",
           options: { codemode: false },
           description:
-            "Inspect or extend retrieval budgets, or reset a blocked provider circuit. status returns remaining search/read budget and eligible providers. extend is build/plan-only, targets a direct child session, and grants +3 search/+3 read once. reset_provider is root build/plan-only and clears auth/circuit state without resetting rate caps or budgets.",
+            "Inspect or extend retrieval budgets, or reset a blocked provider circuit. status returns remaining search/read budget, policy-eligible providers, key presence, and connector_status (configured vs recorded live success; not a live health probe). extend is build/plan-only, targets a direct child session, and grants +3 search/+3 read once. reset_provider is root build/plan-only and clears auth/circuit state without resetting rate caps or budgets.",
           input: controlInput as any,
           async execute(rawInput: unknown, toolContext) {
             const input = rawInput as ControlInput;
@@ -579,9 +584,15 @@ export const RetrievalPolicyPlugin = Plugin.define({
 
     // Optional setup runs only after the core policy/permission hooks above.
     try {
-      registrations.push(await registerHostConfig(context));
+      registrations.push(
+        await registerHostConfig(context, { env: env as Record<string, string | undefined> }),
+      );
     } catch {
       // Host config is owned elsewhere; core retrieval policy remains active.
+      // Report failure without echoing config values or credentials.
+      console.error(
+        "retrieval-policy: host config setup failed; continuing without host defaults",
+      );
     }
 
     let tinyfishAvailable = false;

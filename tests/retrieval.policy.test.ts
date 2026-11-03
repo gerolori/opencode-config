@@ -9,6 +9,7 @@ import {
   type SessionLookup,
   type StateFs,
 } from "../lib/retrieval";
+import { EBAY_PUBLIC_TOOLS, EBAY_UNKNOWN_TOOL } from "./fixtures/ebay.tools";
 
 const dirs: string[] = [];
 
@@ -1345,5 +1346,168 @@ describe("durable per-assignment governance", () => {
     expect(
       (await before(third.engine, "duckduckgo_search", "child", "s4", { query: "new-query" })).allowed,
     ).toBe(true);
+  });
+});
+
+describe("eBay retrieval provider", () => {
+  const creds = {
+    EBAY_CLIENT_ID: "id-value",
+    EBAY_CLIENT_SECRET: "secret-value",
+  };
+
+  test("classifies every public tool and fails closed on unknown tools", () => {
+    for (const tool of EBAY_PUBLIC_TOOLS) {
+      const classification = classifyTool(tool.name);
+      expect(classification).not.toBeNull();
+      expect(classification?.provider).toBe("ebay");
+      expect(classification?.kind).toBe(tool.kind as never);
+      expect(classification?.cost).toBe(tool.cost as never);
+      expect(classification?.external).toBe(tool.external);
+      expect(classification?.denyReason).toBeUndefined();
+    }
+    // A new server tool is not usable until the policy is updated deliberately.
+    const unknown = classifyTool(EBAY_UNKNOWN_TOOL);
+    expect(unknown?.provider).toBe("ebay");
+    expect(unknown?.external).toBe(true);
+    expect(unknown?.denyReason).toBe("unclassified_retrieval_tool");
+    // Flattened 2.x MCP names normalize to the same classification.
+    expect(classifyTool("mcp__ebay__get_item")?.kind).toBe("read");
+  });
+
+  test("requires credentials and the fetch agent", async () => {
+    const noCreds = await harness();
+    noCreds.engine.noteAgent("s", "fetch");
+    const missing = await before(noCreds.engine, "ebay_search_listings", "s", "e1", {
+      query: "iphone 13",
+    });
+    expect(missing.allowed).toBe(false);
+    expect(missing.reason).toBe("missing_api_key");
+
+    const keyed = await harness({ env: creds });
+    keyed.engine.noteAgent("build", "build");
+    const wrongAgent = await before(keyed.engine, "ebay_search_listings", "build", "e2", {
+      query: "iphone 13",
+    });
+    expect(wrongAgent.allowed).toBe(false);
+    expect(wrongAgent.reason).toBe("agent_denied");
+  });
+
+  test("charges eBay searches and item reads to the existing budgets", async () => {
+    const { engine } = await harness({ env: creds });
+
+    engine.noteAgent("search", "fetch");
+    for (let index = 0; index < 3; index += 1) {
+      const decision = await before(engine, "ebay_search_listings", "search", `s${index}`, {
+        query: `query-${index}`,
+      });
+      expect(decision.allowed).toBe(true);
+    }
+    const noSearch = await before(engine, "ebay_price_summary", "search", "s4", {
+      query: "query-4",
+    });
+    expect(noSearch.allowed).toBe(false);
+    expect(noSearch.reason).toBe("budget_exhausted");
+
+    engine.noteAgent("read", "fetch");
+    for (let index = 0; index < 3; index += 1) {
+      const decision = await before(engine, "ebay_get_item", "read", `r${index}`, {
+        item_id: `v1|${index}|0`,
+      });
+      expect(decision.allowed).toBe(true);
+    }
+    const noRead = await before(engine, "ebay_get_item", "read", "r4", {
+      item_id: "v1|9|0",
+    });
+    expect(noRead.allowed).toBe(false);
+    expect(noRead.reason).toBe("budget_exhausted");
+
+    const status = await engine.status({}, { sessionID: "read", agent: "fetch" });
+    expect(status.report?.used.read).toBe(4);
+    expect(status.report?.used.blockedRead).toBe(1);
+  });
+
+  test("a per-item denial blocks that item, not the provider", async () => {
+    const { engine, dir } = await harness({ env: creds });
+    engine.noteAgent("s", "fetch");
+    const blockedItem = "v1|111|0";
+
+    expect(
+      (await before(engine, "ebay_get_item", "s", "g1", { item_id: blockedItem })).allowed,
+    ).toBe(true);
+    await recordError(
+      engine,
+      failedCall("ebay_get_item", "s", "g1", "403 access denied for this listing"),
+    );
+
+    const state = await stateJson(dir);
+    expect(state.providers.ebay?.failures ?? 0).toBe(0);
+    expect(state.providers.ebay?.cooldownUntil).toBeUndefined();
+    expect(
+      (await before(engine, "ebay_get_item", "s", "g2", { item_id: "v1|222|0" })).allowed,
+    ).toBe(true);
+
+    const again = await before(engine, "ebay_get_item", "s", "g3", {
+      item_id: blockedItem,
+    });
+    expect(again.allowed).toBe(false);
+    expect(again.reason).toBe("resource_blocked");
+    expect(again.allowedNextProviders).toEqual([]);
+  });
+
+  test("a search-level denial opens the provider circuit", async () => {
+    const { engine } = await harness({ env: creds });
+    engine.noteAgent("s", "fetch");
+    await before(engine, "ebay_search_listings", "s", "c1", { query: "one" });
+    await recordError(
+      engine,
+      failedCall(
+        "ebay_search_listings",
+        "s",
+        "c1",
+        "403 access denied by eBay application policy",
+      ),
+    );
+    const denied = await before(engine, "ebay_search_listings", "s", "c2", {
+      query: "two",
+    });
+    expect(denied.allowed).toBe(false);
+    expect(denied.reason).toBe("provider_circuit_open");
+  });
+
+  test("status separates key presence from live connector evidence", async () => {
+    const { engine } = await harness({ env: creds });
+    let status = await engine.status({}, { sessionID: "root", agent: "fetch" });
+    let ebay = status.report?.providers.find((provider) => provider.provider === "ebay");
+    expect(ebay?.key_configured).toBe(true);
+    expect(ebay?.available).toBe(true);
+    // Policy-eligible is not proof that the MCP server is connected.
+    expect(ebay?.connector_status).toBe("configured_unverified");
+    expect(status.report?.availability_note).toBe(
+      "policy_eligibility_not_live_connector_health",
+    );
+    expect(ebay?.cost).toBe("free_bounded");
+    const text = JSON.stringify(status.report);
+    expect(text).not.toContain("id-value");
+    expect(text).not.toContain("secret-value");
+
+    engine.noteAgent("s", "fetch");
+    await before(engine, "ebay_search_listings", "s", "ok1", { query: "one" });
+    await engine.after(
+      { tool: "ebay_search_listings", sessionID: "s", callID: "ok1", args: {} },
+      { title: "ok", output: "", metadata: {} },
+    );
+    status = await engine.status({}, { sessionID: "root", agent: "fetch" });
+    ebay = status.report?.providers.find((provider) => provider.provider === "ebay");
+    expect(ebay?.connector_status).toBe("live_success_recorded");
+  });
+
+  test("status reports missing eBay credentials as not configured", async () => {
+    const { engine } = await harness({ env: {} });
+    const status = await engine.status({}, { sessionID: "root", agent: "fetch" });
+    const ebay = status.report?.providers.find((provider) => provider.provider === "ebay");
+    expect(ebay?.key_configured).toBe(false);
+    expect(ebay?.connector_status).toBe("not_configured");
+    expect(ebay?.available).toBe(false);
+    expect(ebay?.reason).toBe("missing_api_key");
   });
 });

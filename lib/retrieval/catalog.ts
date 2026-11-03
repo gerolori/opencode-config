@@ -177,6 +177,33 @@ const EXACT: Readonly<Record<string, ToolClassification>> = {
     cost: "free",
     external: false,
   },
+
+  // eBay Browse API, exposed by the local `ebay` MCP server. All three tools
+  // are read-only: `search_listings` and `price_summary` each issue one Browse
+  // search request and consume the search budget; `get_item` reads a single
+  // concrete listing and consumes the read budget. eBay's own API quota bounds
+  // the provider, so the cost class is free_bounded, not free.
+  ebay_search_listings: {
+    tool: "ebay_search_listings",
+    kind: "search",
+    provider: "ebay",
+    cost: "free_bounded",
+    external: true,
+  },
+  ebay_price_summary: {
+    tool: "ebay_price_summary",
+    kind: "search",
+    provider: "ebay",
+    cost: "free_bounded",
+    external: true,
+  },
+  ebay_get_item: {
+    tool: "ebay_get_item",
+    kind: "read",
+    provider: "ebay",
+    cost: "free_bounded",
+    external: true,
+  },
 };
 
 const COST: Readonly<Record<ProviderId, CostClass>> = {
@@ -188,6 +215,7 @@ const COST: Readonly<Record<ProviderId, CostClass>> = {
   builtin_webfetch: "free",
   builtin_websearch: "unknown_maybe_paid",
   semble: "free",
+  ebay: "free_bounded",
   unknown: "unknown_maybe_paid",
 };
 
@@ -273,6 +301,18 @@ export function classifyTool(rawTool: string): ToolClassification | null {
       denyReason: "unclassified_retrieval_tool",
     };
   }
+  if (ns === "ebay") {
+    // The local eBay server is read-only today. A new tool must be audited
+    // before it can spend budget or bypass resource/circuit protections.
+    return {
+      tool,
+      kind: "search",
+      provider: "ebay",
+      cost: "unknown_maybe_paid",
+      external: true,
+      denyReason: "unclassified_retrieval_tool",
+    };
+  }
 
   // Other common web-retrieval MCPs are fail-closed too. This intentionally
   // does not match app-action tools such as Composio's `*_search_tools` or
@@ -338,6 +378,12 @@ export function normalizeValue(value: string): string {
 export type ReadPlan = {
   /** Normalized URLs, when the arguments identify concrete resources. */
   urls: string[];
+  /**
+   * Concrete resource keys for provider-independent blocking. Usually the same
+   * as `urls`; provider-specific read ids (for example an eBay item id) use an
+   * opaque namespaced key so a per-resource denial cannot be bypassed.
+   */
+  resources: string[];
   /** Provider-limit keys. Concrete URLs, or a query pseudo-key. */
   keys: string[];
   /** Opaque tokens cannot be checked against blocked resources. */
@@ -356,7 +402,7 @@ export const MAX_READS_PER_CALL = 3;
  */
 export function extractReadPlan(args: unknown): ReadPlan {
   if (!args || typeof args !== "object") {
-    return { urls: [], keys: [], opaque: true, requested: 1 };
+    return { urls: [], resources: [], keys: [], opaque: true, requested: 1 };
   }
   const a = args as Record<string, unknown>;
   const rawUrls: string[] = [];
@@ -370,6 +416,7 @@ export function extractReadPlan(args: unknown): ReadPlan {
   if (malformedBatch) {
     return {
       urls: [],
+      resources: [],
       keys: [],
       opaque: true,
       requested: Math.max(1, Array.isArray(a.urls) ? a.urls.length : 1),
@@ -381,18 +428,28 @@ export function extractReadPlan(args: unknown): ReadPlan {
   }
   if (rawUrls.length > 0) {
     const urls = rawUrls.map(normalizeValue);
-    return { urls, keys: urls, opaque: false, requested: urls.length };
+    return { urls, resources: urls, keys: urls, opaque: false, requested: urls.length };
   }
 
   const token = firstString(a.token, a.expand_token, a.link_token);
   if (token) {
-    return { urls: [], keys: [], opaque: true, requested: 1 };
+    return { urls: [], resources: [], keys: [], opaque: true, requested: 1 };
+  }
+
+  // Provider-specific concrete resource ids. eBay `get_item` is the only such
+  // read today; the namespaced key prevents a URL-extractor block from being
+  // confused with an item-level block.
+  const itemId = firstString(a.item_id, a.itemId);
+  if (itemId) {
+    const resource = `ebay:item:${normalizeValue(itemId)}`;
+    return { urls: [], resources: [resource], keys: [resource], opaque: false, requested: 1 };
   }
 
   const query = firstString(a.query, a.q);
   if (query) {
     return {
       urls: [],
+      resources: [],
       keys: [`q:${normalizeValue(query)}`],
       opaque: false,
       requested: 1,
@@ -400,7 +457,7 @@ export function extractReadPlan(args: unknown): ReadPlan {
   }
 
   // Unknown read shape: fail closed rather than guessing.
-  return { urls: [], keys: [], opaque: true, requested: 1 };
+  return { urls: [], resources: [], keys: [], opaque: true, requested: 1 };
 }
 
 

@@ -142,9 +142,10 @@ It is not restricted or reduced by this config.
 
 ## Host defaults and credentials
 
-Host initialization adds Exa, Semble, and Home Assistant defaults **only when those
-server entries are absent**. Explicit entries are preserved, including
-`disabled: true` and custom commands/URLs.
+Host initialization adds Exa, Semble, eBay, and Home Assistant defaults **only when
+those server entries are absent**. Explicit entries are preserved, including
+`disabled: true` and custom commands/URLs, except the tracked eBay placeholder, which
+is resolved and enabled only when its local project and both credentials exist.
 
 - `opencode.host.example.jsonc` sets Semble `disabled: true` by default.
 - `OPENCODE_DISABLE_SEMBLE=1` is a real one-way kill switch, even for an explicit
@@ -154,7 +155,10 @@ server entries are absent**. Explicit entries are preserved, including
   `~/mcp-servers/semble`), unless the kill switch is set.
 - Home Assistant requires both `HA_MCP_URL` and `HA_BEARER_TOKEN`; there is no personal
   fallback URL.
-- eBay stays disabled pending diagnosis.
+- eBay requires a valid local project (`EBAY_MCP_DIR` or `~/mcp-servers/ebay`) and both
+  `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET`; missing prerequisites leave it disabled.
+  `OPENCODE_DISABLE_EBAY=1` is a one-way kill switch.
+- eBay's historical errors remain undiagnosed and it is not live-verified.
 
 Headers stay in memory, never source or logs. `service.json` / `service.jsonc` may
 contain service credentials; they are ignored and must never be committed, printed, or
@@ -163,9 +167,11 @@ historical; do not assume it is the active location.
 
 ## MCP status
 
-Connected: `context7`, `DuckDuckGo`, `gh_grep`, `Semble`, `SQZ`.
+Previously observed connected (not re-verified here): `context7`, `DuckDuckGo`,
+`gh_grep`, `Semble`, `SQZ`. Semble stays host-auto-detected and explore-only.
 
-- eBay disabled.
+- eBay: configured, conditionally available, not verified. Its historical errors are
+  undiagnosed; do not claim a working connector without a live read-only test.
 - Composio needs authentication under 2.2.5; old OAuth is not claimed migrated or
   connected.
 - Exa and Home Assistant are absent because env prerequisites are not met.

@@ -318,6 +318,34 @@ describe("permission actions", () => {
     }
   });
 
+  test("eBay is fetch-only and Semble is explore-only", () => {
+    const allows = (agent: string, action: string) =>
+      (agents[agent].permissions ?? []).some(
+        (rule: any) =>
+          rule.action === action && rule.resource === "*" && rule.effect === "allow",
+      );
+
+    expect(config.permissions).toContainEqual({
+      action: "ebay_*",
+      resource: "*",
+      effect: "deny",
+    });
+    expect(allows("fetch", "ebay_*")).toBe(true);
+    for (const name of ["build", "plan", "code", "review", "explore", "track", "composio"]) {
+      expect(allows(name, "ebay_*")).toBe(false);
+    }
+
+    expect(config.permissions).toContainEqual({
+      action: "semble_*",
+      resource: "*",
+      effect: "deny",
+    });
+    expect(allows("explore", "semble_*")).toBe(true);
+    for (const name of ["build", "plan", "code", "review", "fetch", "track", "composio"]) {
+      expect(allows(name, "semble_*")).toBe(false);
+    }
+  });
+
   test("the global deny is first and read keeps the .env approval convention", () => {
     expect(config.permissions[0]).toEqual({ action: "*", resource: "*", effect: "deny" });
     const readRules = config.permissions.filter((rule: any) => rule.action === "read");
@@ -358,7 +386,9 @@ describe("prompts, commands, and host example", () => {
     const exampleText = readFileSync(join(root, "opencode.host.example.jsonc"), "utf8");
     const example = Schema.decodeUnknownSync(Info)(loadJsonc(join(root, "opencode.host.example.jsonc"))) as Record<string, any>;
     expect(example.mcp.servers.semble.disabled).toBe(true);
-    expect(example.mcp.servers.ebay.disabled).toBe(true);
+    // eBay is host-added only when its prerequisites exist; a pinned disabled
+    // entry would suppress that activation.
+    expect(example.mcp.servers.ebay).toBeUndefined();
     expect(exampleText).not.toMatch(/sk-[A-Za-z0-9]{8,}/);
     expect(exampleText).not.toMatch(/Bearer [A-Za-z0-9]{8,}/);
   });

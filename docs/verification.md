@@ -16,13 +16,33 @@ Observed during activation:
 - No failed custom plugins.
 - `plugins.v2-staging/` removed; `plugins.1x-disabled/` retained.
 - Local entries are not double-listed in config.
-- Tests, typecheck, and config/service preflight were green. At the activation run the
-  suite reported 184 pass / 1 POSIX-only skip / 0 fail; this is a snapshot, not a
-  future guarantee.
-- MCP connected: `context7`, `DuckDuckGo`, `gh_grep`, `Semble`, `SQZ`. eBay disabled;
-  Composio needs authentication; Exa and Home Assistant absent because env
-  prerequisites are not met.
-- No credential values were read.
+- Tests and typecheck were green. The latest local run after the review fixes reported
+  209 pass / 1 POSIX-only skip / 0 fail (210 tests, 8 files); this is a snapshot, not a
+  future guarantee. No service preflight or restart was performed for this change.
+- MCP previously observed connected (not re-verified here): `context7`,
+  `DuckDuckGo`, `gh_grep`, `Semble`, `SQZ`. eBay is
+  configured but conditionally available and **not verified**; its historical errors
+  remain undiagnosed. Composio needs authentication; Exa and Home Assistant absent
+  because env prerequisites are not met.
+- Offline policy/config tests cover eBay classification, budgets, fail-closed unknown
+  tools, fetch-only access, conditional host activation, get()/list() asymmetry, and
+  status connector evidence. These are not a live connector test.
+- OpenCode 2.2.5 environment interpolation: the installed CLI binary contains
+  `ConfigVariable.substitute`, which replaces `{env:NAME}` with
+  `env?.[NAME] ?? process.env[NAME] ?? ""`; a missing variable becomes an empty
+  string, not a literal placeholder. Host initialization now also writes the effective
+  eBay values in memory and omits `EBAY_ENV` when unset, so it does not depend on
+  transform-time re-interpolation. No config dump was run.
+- Semble entrypoint: the local `.venv/Scripts/semble.exe --help` ran offline and
+  exited 0. `semble` is provided by the `semble` dependency's console script, not by a
+  local `[project.scripts]` table; the reviewer's "missing entrypoint" inference is
+  incorrect.
+- MCP editor contract: installed `@opencode/plugin` 2.2.5 `promise/mcp.d.ts` exposes
+  `list`, `get`, `set`, `update`, and `remove`. Host initialization now seeds its view
+  from `get()` because `list()` may omit a disabled entry; tests cover the asymmetric
+  case and a `get()`-only custom entry is preserved.
+- No credential values were read or printed; only presence booleans and fake sentinel
+  values in tests were used.
 
 Real model-turn, tool, and Code Mode smoke checks remain pending.
 

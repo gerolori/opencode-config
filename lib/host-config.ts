@@ -98,6 +98,64 @@ function isStandardSqzCommand(command: string[] | undefined): boolean {
   return Array.isArray(command) && command.length === 1 && command[0] === "sqz-mcp";
 }
 
+/**
+ * Recognize the tracked/default eBay command after OpenCode's config loader may
+ * have already replaced `{env:EBAY_MCP_DIR}` (a missing variable becomes "").
+ *
+ * The standard shape is managed when the directory is still the placeholder, is
+ * empty, or equals the configured env override. A different absolute path is a
+ * user override and is preserved.
+ */
+function isManagedEbayCommand(
+  command: string[] | undefined,
+  envEbayDir: string,
+): boolean {
+  if (
+    !Array.isArray(command) ||
+    command.length !== 5 ||
+    command[0] !== "uv" ||
+    command[1] !== "--directory" ||
+    command[3] !== "run" ||
+    command[4] !== "ebay-mcp"
+  ) {
+    return false;
+  }
+  const dir = command[2] ?? "";
+  if (dir === "{env:EBAY_MCP_DIR}" || dir === "") return true;
+  return envEbayDir.length > 0 && dir === envEbayDir;
+}
+
+function standardEbayCommand(dir: string): string[] {
+  return ["uv", "--directory", dir, "run", "ebay-mcp"];
+}
+
+/**
+ * Build the effective eBay child environment from the service environment.
+ *
+ * OpenCode 2.2.5 interpolates `{env:NAME}` in static config, but a missing
+ * variable becomes an empty string and the post-config MCP transform may not be
+ * re-interpolated. Writing the effective values here avoids a literal
+ * placeholder and avoids depending on that ordering. Optional `EBAY_ENV` is
+ * omitted when unset; the eBay server treats an absent/empty value as
+ * `production`.
+ */
+function ebayEnvironment(
+  env: Record<string, string | undefined>,
+  existing: Record<string, string> = {},
+): Record<string, string> {
+  const out = { ...existing };
+  const clientId = env.EBAY_CLIENT_ID?.trim();
+  const clientSecret = env.EBAY_CLIENT_SECRET?.trim();
+  if (clientId) out.EBAY_CLIENT_ID = clientId;
+  if (clientSecret) out.EBAY_CLIENT_SECRET = clientSecret;
+  const environment = env.EBAY_ENV?.trim();
+  if (environment) out.EBAY_ENV = environment;
+  else if (out.EBAY_ENV === "{env:EBAY_ENV}" || out.EBAY_ENV === "") {
+    delete out.EBAY_ENV;
+  }
+  return out;
+}
+
 function isDisabled(value: string | undefined): boolean {
   return value === "1" || value === "true";
 }
@@ -105,9 +163,11 @@ function isDisabled(value: string | undefined): boolean {
 /**
  * Apply host-local initialization to a plain resolved config.
  *
- * Optional Exa/Semble/Home Assistant servers are added only when absent and
- * their prerequisites are present. Existing entries are never re-enabled or
- * rewritten; SQZ only gets the Windows executable-name adjustment.
+ * Optional Exa/Semble/eBay/Home Assistant servers are added only when absent
+ * and their prerequisites are present. Existing entries are never re-enabled
+ * or rewritten, with one exception: the tracked eBay entry uses an env
+ * placeholder and is enabled only when both the local project and credentials
+ * exist. SQZ only gets the Windows executable-name adjustment.
  */
 export function applyHostConfig(
   config: HostConfig,
@@ -143,6 +203,41 @@ export function applyHostConfig(
       command: ["uv", "--directory", sembleCandidate, "run", "semble"],
       disabled: false,
       codemode: true,
+    };
+  }
+
+  const disableEbay = isDisabled(resolved.env.OPENCODE_DISABLE_EBAY);
+  const envEbayDir = resolved.env.EBAY_MCP_DIR?.trim() ?? "";
+  const ebayCandidate = envEbayDir || join(resolved.home, "mcp-servers", "ebay");
+  const ebayProjectValid =
+    isLocalDirectory(ebayCandidate, resolved.platform, resolved.isDirectory) &&
+    resolved.hasFile(join(ebayCandidate, "pyproject.toml"));
+  const ebayCredentialsPresent = Boolean(
+    resolved.env.EBAY_CLIENT_ID?.trim() && resolved.env.EBAY_CLIENT_SECRET?.trim(),
+  );
+  const ebayValid = !disableEbay && ebayProjectValid && ebayCredentialsPresent;
+  const ebay = servers.ebay;
+  if (ebay && disableEbay) {
+    // One-way kill switch, mirroring Semble: disable what exists but keep the
+    // user's command and every other field.
+    ebay.disabled = true;
+  }
+  if (ebay && ebayValid && isManagedEbayCommand(ebay.command, envEbayDir)) {
+    // Resolve the tracked placeholder only when the project and both
+    // credentials exist. Values stay in memory and are never written to source
+    // or logs.
+    ebay.command = standardEbayCommand(ebayCandidate);
+    ebay.environment = ebayEnvironment(resolved.env, ebay.environment);
+    ebay.disabled = false;
+  }
+  if (!ebay && ebayValid) {
+    // Absent entry: add a portable default with effective values in memory.
+    servers.ebay = {
+      type: "local",
+      command: standardEbayCommand(ebayCandidate),
+      environment: ebayEnvironment(resolved.env),
+      disabled: false,
+      codemode: false,
     };
   }
 
@@ -186,15 +281,39 @@ export function applyHostConfig(
  * The retrieval extension owner calls this once during setup. The returned
  * Registration can be disposed with the extension's own lifecycle.
  */
+const HOST_MANAGED_SERVERS = ["sqz", "semble", "ebay", "exa", "home_assistant"] as const;
+
 export async function registerHostConfig(
   context: HostConfigContext,
   options: HostConfigOptions = {},
 ): Promise<Registration> {
-  const disableSemble = isDisabled((options.env ?? process.env).OPENCODE_DISABLE_SEMBLE);
+  const env = options.env ?? process.env;
+  const disableSemble = isDisabled(env.OPENCODE_DISABLE_SEMBLE);
+  const envEbayDir = env.EBAY_MCP_DIR?.trim() ?? "";
   return context.mcp.transform((editor: MCPEditor) => {
-    const current: HostConfig = {
-      mcp: { servers: Object.fromEntries(editor.list()) },
-    };
+    // `list()` may omit a disabled entry that `get()` still returns. Seed the
+    // resolved view from `get()` for every host-managed name so an existing
+    // entry is never treated as absent and overwritten by `set()`.
+    const listed: Record<string, HostMcpServer | undefined> = Object.fromEntries(
+      editor.list(),
+    );
+    for (const name of HOST_MANAGED_SERVERS) {
+      if (listed[name] !== undefined) continue;
+      const existing = editor.get(name);
+      if (existing !== undefined) listed[name] = existing as HostMcpServer;
+    }
+    // The editor may expose live objects. Capture the pre-transform state so
+    // updates are still reported when applyHostConfig mutates in place.
+    const prior = new Map<string, { disabled?: boolean; command?: string[] }>();
+    for (const [name, server] of Object.entries(listed)) {
+      if (!server) continue;
+      const command = (server as HostMcpServer).command;
+      prior.set(name, {
+        disabled: server.disabled,
+        command: Array.isArray(command) ? [...command] : undefined,
+      });
+    }
+    const current: HostConfig = { mcp: { servers: listed } };
     applyHostConfig(current, options);
     for (const [name, server] of Object.entries(current.mcp?.servers ?? {})) {
       if (!server) continue;
@@ -209,6 +328,26 @@ export async function registerHostConfig(
       } else if (name === "semble" && disableSemble) {
         editor.update(name, (target) => {
           target.disabled = true;
+        });
+      } else if (name === "ebay") {
+        // Only the resolved placeholder state is written back. A custom eBay
+        // command keeps its user-defined disabled flag and path.
+        const existing = editor.get(name);
+        if (!existing || existing.type !== "local") continue;
+        const original = prior.get(name);
+        const commandChanged =
+          original?.command !== undefined &&
+          isManagedEbayCommand(original.command, envEbayDir) &&
+          server.command !== undefined &&
+          original.command.join("\u0000") !== server.command.join("\u0000");
+        const disabledChanged = original?.disabled !== server.disabled;
+        if (!commandChanged && !disabledChanged) continue;
+        editor.update(name, (target) => {
+          if (target.type !== "local") return;
+          target.disabled = server.disabled;
+          if (commandChanged && server.command !== undefined) {
+            target.command = server.command;
+          }
         });
       }
     }

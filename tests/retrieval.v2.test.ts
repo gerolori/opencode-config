@@ -28,10 +28,19 @@ async function harness(options: {
   providers?: string[];
   defaultProvider?: string | false;
   editorMode?: "adapter" | "missing-default" | "throw";
+  mcpMode?: "ok" | "throw";
   withEventStream?: boolean;
   stateDir?: string;
+  env?: Record<string, string | undefined>;
 } = {}) {
   const dir = options.stateDir ?? (await tempDir());
+  // Hermetic by default: never let host detection walk the real home directory
+  // or read the real process environment.
+  const env: Record<string, string | undefined> = {
+    SEMBLE_MCP_DIR: "C:/__opencode_test_nonexistent__/semble",
+    EBAY_MCP_DIR: "C:/__opencode_test_nonexistent__/ebay",
+    ...(options.env ?? {}),
+  };
   const sessions =
     options.sessions ??
     ({
@@ -84,8 +93,9 @@ async function harness(options: {
     }
     await new Promise((resolve) => setTimeout(resolve, 0));
   };
+  const mcpServers = new Map<string, any>();
   const context: any = {
-    options: { stateDir: dir },
+    options: { stateDir: dir, env },
     ...(options.withEventStream ? { event: { subscribe: () => eventIterator } } : {}),
     websearch: {
       async providers() {
@@ -121,7 +131,21 @@ async function harness(options: {
     mcp: {
       async transform(callback: (editor: any) => void) {
         mcpTransformCalls += 1;
-        callback({ list: () => [], update: () => {} });
+        if (options.mcpMode === "throw") throw new Error("broken mcp editor");
+        // Complete MCPEditor surface used by registerHostConfig: a missing
+        // get/set would otherwise throw into the optional-setup catch and be
+        // silently ignored by the test.
+        callback({
+          list: () => [...mcpServers.entries()],
+          get: (name: string) => mcpServers.get(name),
+          set: (name: string, server: any) => {
+            mcpServers.set(name, server);
+          },
+          update: (name: string, update: (server: any) => void) => {
+            const server = mcpServers.get(name);
+            if (server) update(server);
+          },
+        });
         return { dispose: async () => {} };
       },
     },
@@ -153,6 +177,7 @@ async function harness(options: {
     sessions,
     emitPermissionEvent,
     mcpTransformCalls: () => mcpTransformCalls,
+    mcpServerNames: () => [...mcpServers.keys()].sort(),
     websearchState: () => ({
       providers: [...nativeProviders.keys()],
       default: nativeDefault,
@@ -383,6 +408,9 @@ describe("retrieval-policy 2.x staging plugin", () => {
     expect(h.hooks["execute.after"]?.length).toBe(1);
     expect(h.tools.map((tool) => tool.name)).toContain("retrieval_control");
     expect(h.mcpTransformCalls()).toBe(1);
+    // The complete editor mock and hermetic env mean host initialization did
+    // not throw into the plugin's optional-setup guard.
+    expect(h.mcpServerNames()).toEqual([]);
     expect(h.editorKeys()).toEqual(["add", "default"]);
 
     await callBefore(
@@ -438,6 +466,23 @@ describe("retrieval-policy 2.x staging plugin", () => {
         agent: "fetch",
       });
       expect(status.report.used.search).toBe(1);
+    }
+  });
+
+  test("reports host-config setup failure without disabling core policy", async () => {
+    const messages: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      messages.push(args.map((arg) => String(arg)).join(" "));
+    };
+    try {
+      const h = await harness({ mcpMode: "throw" });
+      expect(h.hooks["execute.before"]?.length).toBe(1);
+      expect(h.hooks["execute.after"]?.length).toBe(1);
+      expect(h.tools.map((tool) => tool.name)).toContain("retrieval_control");
+      expect(messages.join("\n")).toContain("host config setup failed");
+    } finally {
+      console.error = originalError;
     }
   });
 
@@ -1066,15 +1111,12 @@ describe("retrieval-policy 2.x staging plugin", () => {
   });
 
   test("restricts native websearch before execution and preserves Exa MCP", async () => {
-    const previousTiny = process.env.TINYFISH_API_KEY;
-    const previousExa = process.env.EXA_API_KEY;
-    process.env.TINYFISH_API_KEY = "test-key";
-    process.env.EXA_API_KEY = "exa-key";
-    try {
-      const h = await harness({
-        providers: ["exa", "tavily", "tinyfish"],
-        defaultProvider: "exa",
-      });
+    const env = { TINYFISH_API_KEY: "test-key", EXA_API_KEY: "exa-key" };
+    const h = await harness({
+      providers: ["exa", "tavily", "tinyfish"],
+      defaultProvider: "exa",
+      env,
+    });
       const state = h.websearchState();
       expect(state.providers).toEqual(["exa", "tavily", "tinyfish"]);
       expect(state.default).toBe("tinyfish");
@@ -1122,6 +1164,7 @@ describe("retrieval-policy 2.x staging plugin", () => {
       const unavailable = await harness({
         providers: ["exa", "tavily"],
         defaultProvider: "exa",
+        env,
       });
       const unavailableState = unavailable.websearchState();
       expect(unavailableState.providers).toEqual(["exa", "tavily"]);
@@ -1141,6 +1184,7 @@ describe("retrieval-policy 2.x staging plugin", () => {
       const randomFallback = await harness({
         providers: ["exa", "tavily"],
         defaultProvider: "random",
+        env,
       });
       const randomState = randomFallback.websearchState();
       expect(randomState.providers).toEqual(["exa", "tavily"]);
@@ -1148,24 +1192,15 @@ describe("retrieval-policy 2.x staging plugin", () => {
       expect(resolveNativeProvider(randomState)).toBe(false);
       expect(resolveNativeProvider({ ...randomState, storedKv: "random" })).toBe(false);
 
-      // Restricting the native catalog must not disable the Exa MCP tool.
-      await callBefore(
-        unavailable.hooks,
-        event("exa_web_search_exa", "child", "exa-2", { query: "semantic" }, "fetch"),
-      );
-    } finally {
-      if (previousTiny === undefined) delete process.env.TINYFISH_API_KEY;
-      else process.env.TINYFISH_API_KEY = previousTiny;
-      if (previousExa === undefined) delete process.env.EXA_API_KEY;
-      else process.env.EXA_API_KEY = previousExa;
-    }
+    // Restricting the native catalog must not disable the Exa MCP tool.
+    await callBefore(
+      unavailable.hooks,
+      event("exa_web_search_exa", "child", "exa-2", { query: "semantic" }, "fetch"),
+    );
   });
 
   test("permits keyless native tinyfish under the same caps", async () => {
-    const previous = process.env.TINYFISH_API_KEY;
-    delete process.env.TINYFISH_API_KEY;
-    try {
-      const h = await harness({ providers: ["tinyfish"] });
+    const h = await harness({ providers: ["tinyfish"] });
       const native = event("websearch", "child", "keyless-1", { query: "x" }, "fetch");
       await callBefore(h.hooks, native);
       await callAfter(h.hooks, {
@@ -1181,20 +1216,16 @@ describe("retrieval-policy 2.x staging plugin", () => {
       const tinyfish = status.report.providers.find(
         (provider: any) => provider.provider === "tinyfish",
       );
-      expect(tinyfish.available).toBe(true);
-      expect(tinyfish.key_configured).toBe(false);
-      expect(tinyfish.rate_remaining.minute).toBe(29);
-    } finally {
-      if (previous === undefined) delete process.env.TINYFISH_API_KEY;
-      else process.env.TINYFISH_API_KEY = previous;
-    }
+    expect(tinyfish.available).toBe(true);
+    expect(tinyfish.key_configured).toBe(false);
+    expect(tinyfish.rate_remaining.minute).toBe(29);
   });
 
   test("does not retry native search anonymously after configured auth fails", async () => {
-    const previous = process.env.TINYFISH_API_KEY;
-    process.env.TINYFISH_API_KEY = "configured-key";
-    try {
-      const h = await harness({ providers: ["tinyfish"] });
+    const h = await harness({
+      providers: ["tinyfish"],
+      env: { TINYFISH_API_KEY: "configured-key" },
+    });
       const native = event("websearch", "child", "auth-1", { query: "x" }, "fetch");
       await callBefore(h.hooks, native);
       await callAfter(h.hooks, {
@@ -1212,24 +1243,18 @@ describe("retrieval-policy 2.x staging plugin", () => {
           event("websearch", "child", "auth-2", { query: "next" }, "fetch"),
         ),
       );
-      expect(denied.message).toContain("provider_operator_action_required");
-    } finally {
-      if (previous === undefined) delete process.env.TINYFISH_API_KEY;
-      else process.env.TINYFISH_API_KEY = previous;
-    }
+    expect(denied.message).toContain("provider_operator_action_required");
   });
 
   test("rejects a native websearch error from a wrong provider as policy violation", async () => {
-    const previous = process.env.TINYFISH_API_KEY;
-    process.env.TINYFISH_API_KEY = "test-key";
-    try {
-      const shapes: Array<{ metadata?: Record<string, unknown>; cause?: unknown }> = [
+    const env = { TINYFISH_API_KEY: "test-key" };
+    const shapes: Array<{ metadata?: Record<string, unknown>; cause?: unknown }> = [
         { metadata: { provider: "exa" } },
         { metadata: { providerID: "exa" } },
         { cause: { providerID: "exa" } },
       ];
       for (const [index, shape] of shapes.entries()) {
-        const h = await harness({ providers: ["tinyfish"] });
+        const h = await harness({ providers: ["tinyfish"], env });
         const native = event(
           "websearch",
           "child",
@@ -1271,17 +1296,13 @@ describe("retrieval-policy 2.x staging plugin", () => {
         );
         expect(denied.message).toContain("native_search_provider_unavailable");
       }
-    } finally {
-      if (previous === undefined) delete process.env.TINYFISH_API_KEY;
-      else process.env.TINYFISH_API_KEY = previous;
-    }
   });
 
   test("rejects a native websearch result from the wrong provider", async () => {
-    const previous = process.env.TINYFISH_API_KEY;
-    process.env.TINYFISH_API_KEY = "test-key";
-    try {
-      const h = await harness({ providers: ["tinyfish"] });
+    const h = await harness({
+      providers: ["tinyfish"],
+      env: { TINYFISH_API_KEY: "test-key" },
+    });
       const native = event("websearch", "child", "wrong-1", { query: "x" }, "fetch");
       await callBefore(h.hooks, native);
       await callAfter(h.hooks, {
@@ -1312,10 +1333,6 @@ describe("retrieval-policy 2.x staging plugin", () => {
           event("websearch", "child", "wrong-2", { query: "next" }, "fetch"),
         ),
       );
-      expect(denied.message).toContain("native_search_provider_unavailable");
-    } finally {
-      if (previous === undefined) delete process.env.TINYFISH_API_KEY;
-      else process.env.TINYFISH_API_KEY = previous;
-    }
+    expect(denied.message).toContain("native_search_provider_unavailable");
   });
 });

@@ -48,15 +48,19 @@ function validDir(dir: string) {
 async function runRegistration(
   servers: Map<string, HostMcpServer>,
   options: HostConfigOptions,
+  editorOptions: { hiddenFromList?: string[] } = {},
 ) {
   const sets: string[] = [];
   const updates: string[] = [];
+  const hidden = new Set(editorOptions.hiddenFromList ?? []);
   const registration = { dispose: async () => {} };
   const context = {
     mcp: {
       transform: async (callback: (editor: any) => void) => {
         const editor = {
-          list: () => [...servers.entries()],
+          // Simulates a 2.2.5 editor where list() omits a disabled entry but
+          // get() still returns the real existing entry.
+          list: () => [...servers.entries()].filter(([name]) => !hidden.has(name)),
           get: (name: string) => servers.get(name),
           set: (name: string, server: HostMcpServer) => {
             sets.push(name);
@@ -201,6 +205,419 @@ describe("host config: Semble defaults", () => {
     });
     expect(config.mcp?.servers?.semble?.disabled).toBe(true);
     expect(config.mcp?.servers?.semble?.command).toEqual(["custom-semble"]);
+  });
+});
+
+describe("host config: eBay defaults", () => {
+  const creds = {
+    EBAY_CLIENT_ID: "ebay-client-id-value",
+    EBAY_CLIENT_SECRET: "ebay-client-secret-value",
+  };
+
+  test("valid project and credentials enable the placeholder entry", () => {
+    const config = baseConfig();
+    const dir = "C:/work/ebay";
+    const summary = applyHostConfig(config, {
+      platform: "win32",
+      env: { EBAY_MCP_DIR: dir, ...creds },
+      ...validDir(dir),
+    });
+    expect(summary.added).not.toContain("ebay");
+    expect(config.mcp?.servers?.ebay?.disabled).toBe(false);
+    expect(config.mcp?.servers?.ebay?.command).toEqual([
+      "uv",
+      "--directory",
+      dir,
+      "run",
+      "ebay-mcp",
+    ]);
+    // Effective values are set in memory so the child process does not depend
+    // on re-interpolation; optional EBAY_ENV is omitted when unset.
+    expect(config.mcp?.servers?.ebay?.environment).toEqual({
+      EBAY_CLIENT_ID: creds.EBAY_CLIENT_ID,
+      EBAY_CLIENT_SECRET: creds.EBAY_CLIENT_SECRET,
+    });
+    expect(config.mcp?.servers?.ebay?.environment?.EBAY_ENV).toBeUndefined();
+    // No literal placeholder reaches the child environment.
+    const serialized = JSON.stringify(config);
+    expect(serialized).not.toContain("{env:EBAY_CLIENT_ID}");
+    expect(serialized).not.toContain("{env:EBAY_CLIENT_SECRET}");
+    expect(serialized).not.toContain("{env:EBAY_ENV}");
+  });
+
+  test("defaults to HOME/mcp-servers/ebay when EBAY_MCP_DIR is absent", () => {
+    const config = baseConfig();
+    const dir = "C:/Users/me/mcp-servers/ebay";
+    applyHostConfig(config, {
+      platform: "win32",
+      env: creds,
+      homedir: "C:/Users/me",
+      ...validDir(dir),
+    });
+    expect(config.mcp?.servers?.ebay?.disabled).toBe(false);
+    expect(normalize(config.mcp?.servers?.ebay?.command?.[2] ?? "")).toBe(dir);
+  });
+
+  test("optional EBAY_ENV is passed through and never left as a literal placeholder", () => {
+    const config = baseConfig();
+    const dir = "C:/work/ebay";
+    if (config.mcp?.servers?.ebay) {
+      config.mcp.servers.ebay.environment = {
+        EBAY_CLIENT_ID: "{env:EBAY_CLIENT_ID}",
+        EBAY_CLIENT_SECRET: "{env:EBAY_CLIENT_SECRET}",
+        EBAY_ENV: "{env:EBAY_ENV}",
+      };
+    }
+    applyHostConfig(config, {
+      platform: "win32",
+      env: { EBAY_MCP_DIR: dir, EBAY_ENV: "sandbox", ...creds },
+      ...validDir(dir),
+    });
+    expect(config.mcp?.servers?.ebay?.environment).toEqual({
+      EBAY_CLIENT_ID: creds.EBAY_CLIENT_ID,
+      EBAY_CLIENT_SECRET: creds.EBAY_CLIENT_SECRET,
+      EBAY_ENV: "sandbox",
+    });
+
+    const unset = baseConfig();
+    if (unset.mcp?.servers?.ebay) {
+      unset.mcp.servers.ebay.environment = {
+        EBAY_CLIENT_ID: "{env:EBAY_CLIENT_ID}",
+        EBAY_CLIENT_SECRET: "{env:EBAY_CLIENT_SECRET}",
+        EBAY_ENV: "{env:EBAY_ENV}",
+      };
+    }
+    applyHostConfig(unset, {
+      platform: "win32",
+      env: { EBAY_MCP_DIR: dir, ...creds },
+      ...validDir(dir),
+    });
+    expect(unset.mcp?.servers?.ebay?.environment?.EBAY_ENV).toBeUndefined();
+  });
+
+  test("enables a command already resolved from EBAY_MCP_DIR at config load", () => {
+    const config = baseConfig();
+    const dir = "C:/work/ebay";
+    if (config.mcp?.servers?.ebay) {
+      config.mcp.servers.ebay.command = ["uv", "--directory", dir, "run", "ebay-mcp"];
+    }
+    applyHostConfig(config, {
+      platform: "win32",
+      env: { EBAY_MCP_DIR: dir, ...creds },
+      ...validDir(dir),
+    });
+    expect(config.mcp?.servers?.ebay?.disabled).toBe(false);
+    expect(config.mcp?.servers?.ebay?.command).toEqual([
+      "uv",
+      "--directory",
+      dir,
+      "run",
+      "ebay-mcp",
+    ]);
+    expect(config.mcp?.servers?.ebay?.environment?.EBAY_CLIENT_ID).toBe(creds.EBAY_CLIENT_ID);
+  });
+
+  test("uses the default directory when the loader turned a missing placeholder into empty", () => {
+    const config = baseConfig();
+    if (config.mcp?.servers?.ebay) {
+      config.mcp.servers.ebay.command = ["uv", "--directory", "", "run", "ebay-mcp"];
+    }
+    const dir = "C:/Users/me/mcp-servers/ebay";
+    applyHostConfig(config, {
+      platform: "win32",
+      env: creds,
+      homedir: "C:/Users/me",
+      ...validDir(dir),
+    });
+    expect(config.mcp?.servers?.ebay?.disabled).toBe(false);
+    expect(normalize(config.mcp?.servers?.ebay?.command?.[2] ?? "")).toBe(dir);
+  });
+
+  test("does not rewrite a user-edited eBay path when EBAY_MCP_DIR is unset", () => {
+    const config = baseConfig();
+    if (config.mcp?.servers?.ebay) {
+      config.mcp.servers.ebay.command = ["uv", "--directory", "C:/custom/ebay", "run", "ebay-mcp"];
+    }
+    const defaultDir = "C:/Users/me/mcp-servers/ebay";
+    applyHostConfig(config, {
+      platform: "win32",
+      env: creds,
+      homedir: "C:/Users/me",
+      ...validDir(defaultDir),
+    });
+    expect(config.mcp?.servers?.ebay?.disabled).toBe(true);
+    expect(config.mcp?.servers?.ebay?.command).toEqual([
+      "uv",
+      "--directory",
+      "C:/custom/ebay",
+      "run",
+      "ebay-mcp",
+    ]);
+  });
+
+  test("missing credentials leave the placeholder entry disabled", () => {
+    const config = baseConfig();
+    const dir = "C:/work/ebay";
+    applyHostConfig(config, {
+      platform: "win32",
+      env: { EBAY_MCP_DIR: dir },
+      ...validDir(dir),
+    });
+    expect(config.mcp?.servers?.ebay?.disabled).toBe(true);
+    expect(config.mcp?.servers?.ebay?.command).toEqual([
+      "uv",
+      "--directory",
+      "{env:EBAY_MCP_DIR}",
+      "run",
+      "ebay-mcp",
+    ]);
+  });
+
+  test("invalid, remote, UNC, and non-project directories do not enable eBay", () => {
+    for (const dir of [
+      "https://example.com/ebay",
+      "\\\\server\\share\\ebay",
+      "mcp-servers/ebay",
+    ]) {
+      const config = baseConfig();
+      applyHostConfig(config, {
+        platform: "win32",
+        env: { EBAY_MCP_DIR: dir, ...creds },
+        isDirectory: () => true,
+        hasFile: () => true,
+      });
+      expect(config.mcp?.servers?.ebay?.disabled).toBe(true);
+    }
+    const config = baseConfig();
+    applyHostConfig(config, {
+      platform: "win32",
+      env: { EBAY_MCP_DIR: "C:/work/not-ebay", ...creds },
+      isDirectory: () => true,
+      hasFile: () => false,
+    });
+    expect(config.mcp?.servers?.ebay?.disabled).toBe(true);
+  });
+
+  test("OPENCODE_DISABLE_EBAY is a one-way kill switch", () => {
+    const config = baseConfig();
+    const dir = "C:/work/ebay";
+    if (config.mcp?.servers?.ebay) {
+      config.mcp.servers.ebay.disabled = false;
+      config.mcp.servers.ebay.command = ["uv", "--directory", dir, "run", "ebay-mcp"];
+    }
+    applyHostConfig(config, {
+      platform: "win32",
+      env: { EBAY_MCP_DIR: dir, OPENCODE_DISABLE_EBAY: "1", ...creds },
+      ...validDir(dir),
+    });
+    expect(config.mcp?.servers?.ebay?.disabled).toBe(true);
+    expect(config.mcp?.servers?.ebay?.command).toEqual([
+      "uv",
+      "--directory",
+      dir,
+      "run",
+      "ebay-mcp",
+    ]);
+  });
+
+  test("a user-defined eBay command is never rewritten or re-enabled", () => {
+    const config = baseConfig();
+    const dir = "C:/work/ebay";
+    if (config.mcp?.servers?.ebay) {
+      config.mcp.servers.ebay.command = ["custom-ebay", "--sandbox"];
+      config.mcp.servers.ebay.disabled = true;
+    }
+    const summary = applyHostConfig(config, {
+      platform: "win32",
+      env: { EBAY_MCP_DIR: dir, ...creds },
+      ...validDir(dir),
+    });
+    expect(summary.added).not.toContain("ebay");
+    expect(config.mcp?.servers?.ebay?.disabled).toBe(true);
+    expect(config.mcp?.servers?.ebay?.command).toEqual(["custom-ebay", "--sandbox"]);
+  });
+
+  test("an absent entry is added only when project and credentials are valid", () => {
+    const absent = baseConfig();
+    if (absent.mcp?.servers) delete absent.mcp.servers.ebay;
+    const dir = "C:/work/ebay";
+    const summary = applyHostConfig(absent, {
+      platform: "win32",
+      env: { EBAY_MCP_DIR: dir, ...creds },
+      ...validDir(dir),
+    });
+    expect(summary.added).toContain("ebay");
+    expect(absent.mcp?.servers?.ebay?.disabled).toBe(false);
+    expect(absent.mcp?.servers?.ebay?.environment).toEqual({
+      EBAY_CLIENT_ID: creds.EBAY_CLIENT_ID,
+      EBAY_CLIENT_SECRET: creds.EBAY_CLIENT_SECRET,
+    });
+
+    const noCreds = baseConfig();
+    if (noCreds.mcp?.servers) delete noCreds.mcp.servers.ebay;
+    applyHostConfig(noCreds, {
+      platform: "win32",
+      env: { EBAY_MCP_DIR: dir },
+      ...validDir(dir),
+    });
+    expect(noCreds.mcp?.servers?.ebay).toBeUndefined();
+  });
+
+  test("registration enables only the resolved placeholder state", async () => {
+    const dir = "C:/work/ebay";
+    const servers = new Map<string, HostMcpServer>([
+      [
+        "ebay",
+        {
+          type: "local",
+          command: ["uv", "--directory", "{env:EBAY_MCP_DIR}", "run", "ebay-mcp"],
+          disabled: true,
+          codemode: false,
+        },
+      ],
+    ]);
+    const { sets, updates } = await runRegistration(servers, {
+      platform: "win32",
+      env: { EBAY_MCP_DIR: dir, ...creds },
+      ...validDir(dir),
+    });
+    expect(sets).toEqual([]);
+    expect(updates).toEqual(["ebay"]);
+    expect(servers.get("ebay")?.disabled).toBe(false);
+    expect(servers.get("ebay")?.command).toEqual([
+      "uv",
+      "--directory",
+      dir,
+      "run",
+      "ebay-mcp",
+    ]);
+    expect(servers.get("ebay")?.environment).toEqual({
+      EBAY_CLIENT_ID: creds.EBAY_CLIENT_ID,
+      EBAY_CLIENT_SECRET: creds.EBAY_CLIENT_SECRET,
+    });
+  });
+
+  test("registration uses get() as source of truth when list() hides a disabled eBay entry", async () => {
+    const dir = "C:/work/ebay";
+    const servers = new Map<string, HostMcpServer>([
+      [
+        "ebay",
+        {
+          type: "local",
+          command: ["uv", "--directory", "{env:EBAY_MCP_DIR}", "run", "ebay-mcp"],
+          environment: {
+            EBAY_CLIENT_ID: "{env:EBAY_CLIENT_ID}",
+            EBAY_CLIENT_SECRET: "{env:EBAY_CLIENT_SECRET}",
+            EBAY_ENV: "{env:EBAY_ENV}",
+          },
+          disabled: true,
+          codemode: false,
+        },
+      ],
+    ]);
+    const { sets, updates } = await runRegistration(
+      servers,
+      {
+        platform: "win32",
+        env: { EBAY_MCP_DIR: dir, ...creds },
+        ...validDir(dir),
+      },
+      { hiddenFromList: ["ebay"] },
+    );
+    // Never treat the hidden entry as absent and overwrite it via set().
+    expect(sets).toEqual([]);
+    expect(updates).toEqual(["ebay"]);
+    expect(servers.get("ebay")?.disabled).toBe(false);
+    // The actual entry's placeholder command is replaced, not left unresolved.
+    expect(servers.get("ebay")?.command).toEqual([
+      "uv",
+      "--directory",
+      dir,
+      "run",
+      "ebay-mcp",
+    ]);
+    expect(servers.get("ebay")?.environment?.EBAY_CLIENT_ID).toBe(creds.EBAY_CLIENT_ID);
+    expect(servers.get("ebay")?.environment?.EBAY_ENV).toBeUndefined();
+  });
+
+  test("a get()-only custom eBay entry is preserved even when credentials exist", async () => {
+    const dir = "C:/work/ebay";
+    const servers = new Map<string, HostMcpServer>([
+      [
+        "ebay",
+        {
+          type: "local",
+          command: ["custom-ebay", "--sandbox"],
+          disabled: true,
+          codemode: false,
+        },
+      ],
+    ]);
+    const { sets, updates } = await runRegistration(
+      servers,
+      {
+        platform: "win32",
+        env: { EBAY_MCP_DIR: dir, ...creds },
+        ...validDir(dir),
+      },
+      { hiddenFromList: ["ebay"] },
+    );
+    expect(sets).toEqual([]);
+    expect(updates).toEqual([]);
+    expect(servers.get("ebay")?.disabled).toBe(true);
+    expect(servers.get("ebay")?.command).toEqual(["custom-ebay", "--sandbox"]);
+  });
+
+  test("a get()-only Semble entry is not overwritten by set()", async () => {
+    const servers = new Map<string, HostMcpServer>([
+      [
+        "semble",
+        {
+          type: "local",
+          command: ["custom-semble"],
+          disabled: true,
+          codemode: true,
+        },
+      ],
+    ]);
+    const dir = "C:/work/semble";
+    const { sets, updates } = await runRegistration(
+      servers,
+      {
+        platform: "win32",
+        env: { SEMBLE_MCP_DIR: dir },
+        ...validDir(dir),
+      },
+      { hiddenFromList: ["semble"] },
+    );
+    expect(sets).toEqual([]);
+    expect(updates).toEqual([]);
+    expect(servers.get("semble")?.command).toEqual(["custom-semble"]);
+    expect(servers.get("semble")?.disabled).toBe(true);
+  });
+
+  test("registration leaves a custom eBay entry untouched", async () => {
+    const dir = "C:/work/ebay";
+    const servers = new Map<string, HostMcpServer>([
+      [
+        "ebay",
+        {
+          type: "local",
+          command: ["custom-ebay", "--sandbox"],
+          disabled: true,
+          codemode: false,
+        },
+      ],
+    ]);
+    const { sets, updates } = await runRegistration(servers, {
+      platform: "win32",
+      env: { EBAY_MCP_DIR: dir, ...creds },
+      ...validDir(dir),
+    });
+    expect(sets).toEqual([]);
+    expect(updates).toEqual([]);
+    expect(servers.get("ebay")?.disabled).toBe(true);
+    expect(servers.get("ebay")?.command).toEqual(["custom-ebay", "--sandbox"]);
   });
 });
 

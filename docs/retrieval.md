@@ -17,12 +17,16 @@ retrieval_control({
   action: "status" | "extend" | "reset_provider",
   session_id?: string,
   provider?: "duckduckgo" | "tinyfish" | "exa" | "gh_grep" | "context7" |
-             "builtin_webfetch" | "semble"
+             "builtin_webfetch" | "semble" | "ebay"
 })
 ```
 
 - `status` — caller's own session by default. A `build` / `plan` parent may target a
-  direct child. `fetch` may call only `status`.
+  direct child. `fetch` may call only `status`. `available` / `key_configured` are
+  policy eligibility, not a live connector check; `connector_status` is one of
+  `not_configured`, `configured_unverified`, `live_success_recorded` (a recorded
+  successful call exists; still not a current health probe). The report also carries
+  `availability_note=policy_eligibility_not_live_connector_health`.
 - `extend` — root `build` / `plan` only, direct child only, once. Grants +3 searches
   and +3 reads. Self-targets, non-children, unknown sessions, and repeats are refused.
 - `reset_provider` — root `build` / `plan` only. Requires one of the named providers.
@@ -150,6 +154,21 @@ Safety properties:
 - Do not claim the free arrangement is guaranteed for a paid key; that account's
   billing applies.
 - Paid or unbounded Exa products are denied by policy.
+
+## eBay
+
+- Only `fetch` may call `ebay_*`; it is denied globally and allowed only for `fetch`.
+- `ebay_search_listings` and `ebay_price_summary` each consume one search;
+  `ebay_get_item` consumes one read. Cost class is `free_bounded` (eBay API quota),
+  not an unlimited bypass.
+- A per-item denial on `get_item` blocks that item key; a search-level denial cools the
+  eBay provider circuit. Auth/quota classification uses the same rules as other
+  external providers.
+- eBay is not part of the general provider order; it is used only when an assignment is
+  explicitly about eBay listings. Unknown `ebay_*` tools are denied by default.
+- Credentials present makes eBay policy-eligible (`available`, `key_configured`), but
+  `status` reports `connector_status=configured_unverified` until a successful call is
+  recorded. Do not read that as proof the MCP server is connected.
 
 ## Denials and limits
 

@@ -53,8 +53,8 @@ a new 2.2.5 client to pick up the activated toolset.
 Use the native 2.2.5 sections: `providers`, `agents`, `permissions`, `mcp.servers`, and
 `plugins`. `small_model` is unsupported and removed.
 
-Host initialization adds Exa, Semble, and Home Assistant defaults **only when the
-corresponding entries are absent**.
+Host initialization adds Exa, Semble, eBay, and Home Assistant defaults **only when
+the corresponding entries are absent**.
 
 - `opencode.host.example.jsonc` sets Semble `disabled: true` by default.
 - `OPENCODE_DISABLE_SEMBLE=1` is a real one-way kill switch, even for an explicit
@@ -68,7 +68,23 @@ corresponding entries are absent**.
 - Home Assistant requires **both** `HA_MCP_URL` and `HA_BEARER_TOKEN`; there is no
   personal fallback URL, and it is currently absent because the env prerequisites are
   not met.
-- eBay stays disabled pending diagnosis.
+- eBay is **conditionally available**: enabled only when a valid local project exists
+  (`EBAY_MCP_DIR` or `~/mcp-servers/ebay`) and both `EBAY_CLIENT_ID` /
+  `EBAY_CLIENT_SECRET` are in the service environment. Missing prerequisites leave the
+  tracked entry disabled. `OPENCODE_DISABLE_EBAY=1` is a one-way kill switch. Host
+  initialization writes the effective credential values into the in-memory MCP
+  environment and omits `EBAY_ENV` when unset, so the child never receives a literal
+  `{env:...}` placeholder.
+- eBay is **not verified** in this tree: no live call was made, and the historical
+  eBay errors remain undiagnosed. Configuration is not evidence that the connector
+  works.
+
+Status terms: **configured** = entry present; **available** = policy-eligible
+(prerequisites and credentials present, no active circuit); **verified** = a live call
+succeeded. `retrieval_control` exposes `key_configured` and `connector_status`
+(`not_configured`, `configured_unverified`, `live_success_recorded`); credentials
+alone never report a connector as verified. Only `fetch` may call `ebay_*` tools, and
+only `explore` may call `semble_*`.
 
 `opencode.private.local.json` is optional and not required for the connected Semble
 instance on this host.
@@ -112,6 +128,25 @@ Bash:
 read -rs EXA_API_KEY && export EXA_API_KEY
 read -rs TINYFISH_API_KEY && export TINYFISH_API_KEY
 ```
+
+eBay (both values required; set them in the environment that starts the service):
+
+```powershell
+$secure = Read-Host -AsSecureString "EBAY_CLIENT_ID"
+$env:EBAY_CLIENT_ID = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
+  [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+$secure = Read-Host -AsSecureString "EBAY_CLIENT_SECRET"
+$env:EBAY_CLIENT_SECRET = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
+  [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+```
+
+```bash
+read -rs EBAY_CLIENT_ID && export EBAY_CLIENT_ID
+read -rs EBAY_CLIENT_SECRET && export EBAY_CLIENT_SECRET
+```
+
+After setting them, an idle `opencode service restart` from that same environment is
+required; a config-only `opencode reload` cannot pick up new environment values.
 
 ### Environment changes vs config reload
 

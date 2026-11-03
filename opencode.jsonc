@@ -115,6 +115,11 @@
         "disabled": false,
         "codemode": true
       },
+      // Conditional: host-config enables this entry only when the local project
+      // directory (EBAY_MCP_DIR or ~/mcp-servers/ebay) and both eBay
+      // credentials are present in the service environment. Host-config writes
+      // the effective command and child environment in memory; no credential
+      // value is stored in this file.
       "ebay": {
         "type": "local",
         "command": ["uv", "--directory", "{env:EBAY_MCP_DIR}", "run", "ebay-mcp"],
@@ -321,6 +326,7 @@
         { "action": "exa_*", "resource": "*", "effect": "allow" },
         { "action": "gh_grep_*", "resource": "*", "effect": "allow" },
         { "action": "duckduckgo_*", "resource": "*", "effect": "allow" },
+        { "action": "ebay_*", "resource": "*", "effect": "allow" },
         { "action": "retrieval_control", "resource": "*", "effect": "allow" },
         { "action": "read", "resource": "*", "effect": "deny" },
         { "action": "glob", "resource": "*", "effect": "deny" },

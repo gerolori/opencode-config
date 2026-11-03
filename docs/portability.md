@@ -73,7 +73,10 @@ corresponding entries are absent**.
   `~/mcp-servers/semble`), unless the kill switch is set.
 - Home Assistant requires both `HA_MCP_URL` and `HA_BEARER_TOKEN`; no personal fallback,
   and it is currently absent because the env prerequisites are not met.
-- eBay stays disabled pending diagnosis.
+- eBay is enabled only when a valid local project (`EBAY_MCP_DIR` or
+  `~/mcp-servers/ebay`) and both eBay credentials are present in the service
+  environment. `OPENCODE_DISABLE_EBAY=1` disables it. It is not live-verified, and its
+  historical errors remain undiagnosed.
 
 `opencode.private.local.json` is optional and not required for the connected Semble
 instance on this host. Do not hard-code a machine path into tracked config.

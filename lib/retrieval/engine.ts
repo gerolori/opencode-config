@@ -61,6 +61,7 @@ export const RESETTABLE_PROVIDERS: ProviderId[] = [
   "context7",
   "builtin_webfetch",
   "semble",
+  "ebay",
 ];
 
 export type RetrievalEngineOptions = {
@@ -91,6 +92,8 @@ type PendingCall = {
   keys: string[];
   /** Concrete normalized URLs only. */
   urls: string[];
+  /** Concrete resource keys for blocking (URLs or provider-specific ids). */
+  resources: string[];
   startedAt: number;
   wasRetry: boolean;
 };
@@ -114,10 +117,16 @@ export type ControlStatus = {
   extended: boolean;
   providers: Array<{
     provider: ProviderId;
+    /**
+     * Policy eligibility only: credentials present (when required), not in a
+     * cooldown/operator block. It is not a live connector health check.
+     */
     available: boolean;
     reason?: PolicyReason;
     next_available?: number | "operator";
     key_configured?: boolean;
+    /** Configured/key presence, separate from live connector evidence. */
+    connector_status: "not_configured" | "configured_unverified" | "live_success_recorded";
     cost: CostClass;
     rate_remaining?: { minute: number; hour: number; day: number };
   }>;
@@ -132,6 +141,7 @@ export type ControlStatus = {
     reason?: string;
   };
   note: "counts_are_local_attempts_not_vendor_billing";
+  availability_note: "policy_eligibility_not_live_connector_health";
   blocked_attempts_consume_budget: true;
 };
 
@@ -309,7 +319,7 @@ export class RetrievalEngine {
           this.rememberOutcome(callKey, "failure");
           const resourceScoped =
             classification.kind === "read" &&
-            pending.urls.length > 0 &&
+            pending.resources.length > 0 &&
             (errorInfo.category === "access_denied" ||
               errorInfo.category === "captcha" ||
               errorInfo.category === "unknown" ||
@@ -327,7 +337,7 @@ export class RetrievalEngine {
           }
           if (resourceScoped) {
             this.blockResources(
-              pending.urls,
+              pending.resources,
               errorInfo.category as BlockedResource["reason"],
               errorInfo.retryAfterMs,
               now,
@@ -544,7 +554,12 @@ export class RetrievalEngine {
         ? Boolean(this.env.EXA_API_KEY?.trim())
         : provider === "tinyfish"
           ? Boolean(this.env.TINYFISH_API_KEY?.trim())
-          : undefined;
+          : provider === "ebay"
+            ? Boolean(
+                this.env.EBAY_CLIENT_ID?.trim() &&
+                  this.env.EBAY_CLIENT_SECRET?.trim(),
+              )
+            : undefined;
     const base: ProviderAvailability = {
       provider,
       available: false,
@@ -557,7 +572,7 @@ export class RetrievalEngine {
     if (provider === "tinyfish" && !this.nativeSearchAvailable) {
       return { ...base, reason: "native_search_provider_unavailable" };
     }
-    if (provider === "exa" && !keyConfigured) {
+    if ((provider === "exa" || provider === "ebay") && !keyConfigured) {
       return { ...base, reason: "missing_api_key" };
     }
     if (pstate.requiresOperator) {
@@ -710,6 +725,7 @@ export class RetrievalEngine {
           return query ? [query] : [];
         })();
     const urls = isRead ? (readPlan?.urls ?? []) : [];
+    const resources = isRead ? (readPlan?.resources ?? []) : [];
     const requestedUnits = isRead ? Math.max(1, readPlan?.requested ?? 1) : 1;
     const invalidReadBatch =
       isRead && (Boolean(readPlan?.opaque) || requestedUnits > MAX_READS_PER_CALL);
@@ -824,8 +840,8 @@ export class RetrievalEngine {
       return deny("budget_exhausted", `${classification.kind} budget exhausted (${limit} per session)`);
     }
 
-    for (const url of urls) {
-      if (this.blockedResource(url, now)) {
+    for (const resource of resources) {
+      if (this.blockedResource(resource, now)) {
         return deny(
           "resource_blocked",
           "this URL was blocked by the site; switching extractors is not allowed while the block is active",
@@ -895,6 +911,7 @@ export class RetrievalEngine {
       query: retryToken,
       keys,
       urls,
+      resources,
       startedAt: now,
       wasRetry,
     });
@@ -1064,9 +1081,17 @@ export class RetrievalEngine {
       "context7",
       "builtin_webfetch",
       "builtin_websearch",
+      "ebay",
     ];
     const providers = providerIds.map((provider) => {
       const a = this.providerAvailability(provider, now);
+      const pstate = this.providerState(provider);
+      const connector_status =
+        a.keyConfigured === false
+          ? ("not_configured" as const)
+          : pstate.successes > 0
+            ? ("live_success_recorded" as const)
+            : ("configured_unverified" as const);
       return {
         provider,
         available: a.available,
@@ -1075,6 +1100,7 @@ export class RetrievalEngine {
           ? ("operator" as const)
           : a.nextAvailable,
         key_configured: a.keyConfigured,
+        connector_status,
         cost: a.cost,
         rate_remaining: a.rateRemaining,
       };
@@ -1131,6 +1157,7 @@ export class RetrievalEngine {
         reason: this.state.health.reason,
       },
       note: "counts_are_local_attempts_not_vendor_billing",
+      availability_note: "policy_eligibility_not_live_connector_health",
       blocked_attempts_consume_budget: true,
     };
   }

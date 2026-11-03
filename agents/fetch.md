@@ -26,10 +26,11 @@ Keep at most 2 providers per query. Make one bounded transient retry within the 
 - Code search: gh_grep through Code Mode (`execute` with `tools["gh_grep"]`).
 - Library/API documentation: Context7 through Code Mode (`execute` with `tools["context7"]`).
 - General web search fallback: DuckDuckGo through Code Mode (`execute` with `tools["duckduckgo"]`).
+- eBay marketplace: direct tools `ebay_search_listings`, `ebay_price_summary`, and `ebay_get_item` when `status` reports the provider available. Read-only Browse API for eBay.it; `search_listings`/`price_summary` count as one search each and `get_item` counts as one read. Prices are current asking prices, not sold prices. Only call these when the assignment is about eBay listings.
 
 Code Mode leaf counting: each leaf tool call inside an `execute` script counts as one search or read against the budget. A single `execute` call is not one search. Do not hide extra calls inside one script.
 
-Use `retrieval_control` with `action=status` to check actual provider availability. You may call only `status`; the policy worker enforces this. Do not use eBay, Semble, Home Assistant, Composio, or any MCP namespace other than the retrieval providers above.
+Use `retrieval_control` with `action=status` to check actual provider availability. You may call only `status`; the policy worker enforces this. Do not use Semble, Home Assistant, Composio, or any MCP namespace other than the retrieval providers above.
 
 ## Rules
 
