@@ -663,6 +663,149 @@ describe("host config: Exa defaults", () => {
   });
 });
 
+describe("host config: Composio consumer key", () => {
+  const composioUrl = "https://connect.composio.dev/mcp";
+
+  function withComposio(server?: HostMcpServer): HostConfig {
+    const config = baseConfig();
+    if (server) config.mcp!.servers!.composio = server;
+    return config;
+  }
+
+  test("present key injects x-consumer-api-key and disables OAuth", () => {
+    const config = withComposio({
+      type: "remote",
+      url: composioUrl,
+      oauth: {},
+      disabled: false,
+      codemode: true,
+    });
+    applyHostConfig(config, {
+      platform: "win32",
+      env: { COMPOSIO_CONSUMER_API_KEY: "consumer-key-value" },
+    });
+    const server = config.mcp?.servers?.composio;
+    expect(server?.headers?.["x-consumer-api-key"]).toBe("consumer-key-value");
+    expect(server?.oauth).toBe(false);
+    expect(server?.disabled).toBe(false);
+    expect(server?.url).toBe(composioUrl);
+  });
+
+  test("absent key preserves the existing OAuth flow", () => {
+    const config = withComposio({
+      type: "remote",
+      url: composioUrl,
+      oauth: {},
+      disabled: false,
+      codemode: true,
+    });
+    applyHostConfig(config, { platform: "win32", env: {} });
+    const server = config.mcp?.servers?.composio;
+    expect(server?.oauth).toEqual({});
+    expect(server?.headers).toBeUndefined();
+  });
+
+  test("an absent entry is added only when the consumer key exists", () => {
+    const config = withComposio();
+    const summary = applyHostConfig(config, {
+      platform: "win32",
+      env: { COMPOSIO_CONSUMER_API_KEY: "consumer-key-value" },
+    });
+    expect(summary.added).toContain("composio");
+    expect(config.mcp?.servers?.composio?.headers?.["x-consumer-api-key"]).toBe(
+      "consumer-key-value",
+    );
+    expect(config.mcp?.servers?.composio?.oauth).toBe(false);
+  });
+
+  test("a custom URL or extra header is treated as an explicit host override", () => {
+    const config = withComposio({
+      type: "remote",
+      url: "https://custom.example/mcp",
+      headers: { "x-tenant": "tenant-value" },
+      oauth: {},
+      disabled: false,
+      codemode: true,
+    });
+    applyHostConfig(config, {
+      platform: "win32",
+      env: { COMPOSIO_CONSUMER_API_KEY: "consumer-key-value" },
+    });
+    const server = config.mcp?.servers?.composio;
+    expect(server?.url).toBe("https://custom.example/mcp");
+    expect(server?.headers).toEqual({ "x-tenant": "tenant-value" });
+    expect(server?.oauth).toEqual({});
+  });
+
+  test("a configured OAuth object is preserved as an explicit override", () => {
+    const config = withComposio({
+      type: "remote",
+      url: composioUrl,
+      oauth: { client_id: "custom-client" },
+      disabled: false,
+      codemode: true,
+    });
+    applyHostConfig(config, {
+      platform: "win32",
+      env: { COMPOSIO_CONSUMER_API_KEY: "consumer-key-value" },
+    });
+    const server = config.mcp?.servers?.composio;
+    expect(server?.oauth).toEqual({ client_id: "custom-client" });
+    expect(server?.headers).toBeUndefined();
+  });
+
+  test("a disabled entry is not re-enabled or rewritten", () => {
+    const config = withComposio({
+      type: "remote",
+      url: composioUrl,
+      oauth: {},
+      disabled: true,
+      codemode: true,
+    });
+    applyHostConfig(config, {
+      platform: "win32",
+      env: { COMPOSIO_CONSUMER_API_KEY: "consumer-key-value" },
+    });
+    const server = config.mcp?.servers?.composio;
+    expect(server?.disabled).toBe(true);
+    expect(server?.headers).toBeUndefined();
+    expect(server?.oauth).toEqual({});
+  });
+
+  test("registration applies the header in place", async () => {
+    const servers = new Map<string, HostMcpServer>([
+      [
+        "composio",
+        {
+          type: "remote",
+          url: composioUrl,
+          oauth: {},
+          disabled: false,
+          codemode: true,
+        },
+      ],
+    ]);
+    const { updates } = await runRegistration(servers, {
+      platform: "win32",
+      env: { COMPOSIO_CONSUMER_API_KEY: "consumer-key-value" },
+    });
+    expect(updates).toContain("composio");
+    expect(servers.get("composio")?.headers?.["x-consumer-api-key"]).toBe(
+      "consumer-key-value",
+    );
+    expect(servers.get("composio")?.oauth).toBe(false);
+  });
+
+  test("the summary does not include the consumer key", () => {
+    const config = withComposio();
+    const summary = applyHostConfig(config, {
+      platform: "win32",
+      env: { COMPOSIO_CONSUMER_API_KEY: "super-secret-consumer-key" },
+    });
+    expect(JSON.stringify(summary)).not.toContain("super-secret-consumer-key");
+  });
+});
+
 describe("host config: Home Assistant defaults", () => {
   test("token only does not add Home Assistant", () => {
     const config = baseConfig();

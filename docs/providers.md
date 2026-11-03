@@ -17,6 +17,18 @@ present the configured model name as a measured provider or billing fact.
 
 `build` and `plan` are the only user-selectable primaries; `general` is absent.
 
+### OpenRouter credential route
+
+`OPENROUTER_API_KEY` is optional. Local installed `@opencode/ai` source
+(`dist/providers/openrouter.js`) calls
+`AuthOptions.bearer(input, "OPENROUTER_API_KEY")`, so an environment-variable route is
+supported by that source. It can be delivered through the SOPS vault
+(`docs/secrets.md`). This tree does **not** verify that the environment key takes
+precedence over stored `opencode auth` credentials, that the restarted background
+service inherits it, or that OpenRouter routing, billing, and a live model request use
+it. The key is API-billed and separate from ChatGPT subscription OAuth; it does not
+override or upgrade ChatGPT access.
+
 ## Native OpenAI handoff
 
 Native OpenAI/ChatGPT subscription access is a manual, unverified user step. Use only
@@ -108,6 +120,13 @@ TinyFish:
 - Composio **needs authentication** under 2.2.5. Old OAuth is not claimed migrated or
   connected.
 - Manual command: `opencode mcp auth [<name>]` with the optional name; choose Composio.
+- When `COMPOSIO_CONSUMER_API_KEY` is set, the managed entry uses
+  `x-consumer-api-key` and `oauth: false`; OAuth is disabled while the key remains
+  configured. Removing the key restores the managed default OAuth entry only if no
+  explicit host override changes that behavior. Custom URLs, extra headers, populated
+  OAuth settings, or a disabled entry are preserved and may prevent restoration.
+- Consumer-key user/project scope, access to existing connections, and whether MCP
+  editor changes can persist outside the in-memory effective config are **unverified**.
 
 ## API fallback and credentials
 

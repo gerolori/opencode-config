@@ -40,6 +40,7 @@ restart after a config-only reload; environment changes are separate.
   plugins/                  single active auto-discovery directory
   plugins.1x-disabled/      retained 1.x archive (not loaded)
   service.json / service.jsonc   ignored service credentials; never commit or dump
+  secrets/                  ignored except user-created secrets/opencode.sops.yaml
   cli.json                  deliberately tracked public UI config
   tui.json                  historical; not assumed to be the active location
 ```
@@ -267,6 +268,10 @@ change did not force-enable it or bypass its explicit-disable/kill-switch handli
   connector works until a live read-only test succeeds.
 - Composio **needs authentication** under 2.2.5. Old OAuth is not claimed migrated or
   connected. Use `opencode mcp auth [<name>]` (name optional; choose Composio).
+  A configured `COMPOSIO_CONSUMER_API_KEY` disables OAuth for the managed entry while
+  set. Removing it restores the managed default OAuth entry only if no explicit host
+  override (custom URL/headers, populated OAuth config, or disabled entry) changes that
+  behavior. Consumer-key scope and existing-connection access are unverified.
 - Exa and Home Assistant are absent because their environment prerequisites are not
   met.
 - No credential values were read.
@@ -279,6 +284,17 @@ change did not force-enable it or bypass its explicit-disable/kill-switch handli
 - TinyFish: optional `TINYFISH_API_KEY` from
   `https://agent.tinyfish.ai/api-keys`. Keyless is supported locally under safeguards;
   vendor entitlement is unverified.
+- OpenRouter: optional `OPENROUTER_API_KEY`, also accepted by the SOPS vault. Local
+  installed `@opencode/ai` provider source uses it for bearer auth, but credential
+  precedence over stored auth, service environment inheritance, provider routing and
+  billing, and a live model request are unverified. It is API-billed and separate from
+  ChatGPT subscription OAuth; it does not override or upgrade ChatGPT access.
+- SOPS/age: on Windows the user-tested passphrase-protected identity, restored from a
+  Bitwarden backup, decrypted the real vault. Linux interactive prompt behavior and
+  end-to-end service restart inheritance remain unverified. A direct service launch
+  preserves all ambient caller variables outside the documented allowlist and SOPS
+  identity variables, so avoid launching from a shell that contains unrelated secrets.
+  See `docs/secrets.md`.
 - Use a masked prompt so a key never enters command history:
 
 ```powershell
@@ -366,6 +382,7 @@ smoke checks are listed in `docs/verification.md`.
 - `docs/retrieval.md`
 - `docs/memory.md`
 - `docs/setup.md`
+- `docs/secrets.md`
 - `docs/providers.md`
 - `docs/portability.md`
 - `docs/verification.md`

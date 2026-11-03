@@ -105,8 +105,22 @@ tracked config.
 
 ## Keys
 
-Never paste a literal key into a command, file, or transcript. Use a masked prompt so
-it does not enter shell history.
+For the portable SOPS/age vault path, the user-run creation, permissions, backup,
+and idle-restart procedure is in `docs/secrets.md`. The launcher is
+`scripts/secret-launch.ts`; it decrypts in memory, accepts only the documented
+allowlist, and never prints values or SOPS stderr. Do not ask the agent to create
+or read the real vault or identity.
+
+The Windows passphrase-protected identity path is user-tested: a restored
+Bitwarden backup of the `.age` identity plus its passphrase decrypted the real
+vault. Linux interactive prompt behavior, end-to-end service restart
+inheritance, and ambient environment inheritance by the service child remain
+unverified. A direct service launch preserves all ambient variables except the
+documented allowlist and SOPS identity variables, so avoid launching from a
+shell that holds unrelated secrets.
+
+For one-off values, never paste a literal key into a command, file, or transcript.
+Use a masked prompt so it does not enter shell history.
 
 PowerShell:
 
@@ -146,7 +160,12 @@ read -rs EBAY_CLIENT_SECRET && export EBAY_CLIENT_SECRET
 ```
 
 After setting them, an idle `opencode service restart` from that same environment is
-required; a config-only `opencode reload` cannot pick up new environment values.
+intended to pick them up; a config-only `opencode reload` does not. The 2.2.5 CLI
+command exists, but **end-to-end inheritance by the background service is
+unverified in this tree**. Confirm with an idle local smoke test. The direct
+launcher preserves all other ambient caller variables deliberately (only the
+documented allowlist and SOPS identity variables are rewritten), so an unrelated
+credential in the launching shell can also reach the service.
 
 ### Environment changes vs config reload
 
@@ -159,9 +178,13 @@ environment:
 opencode service restart
 ```
 
-This is the verified 2.2.5 form. Reopening only the TUI is insufficient for an
-already-running service. Configuration-only activation is different: the verified
-`opencode reload` was sufficient and does not require a restart.
+The `opencode service restart` command exists in 2.2.5, but whether the restarted
+background service inherits this shell/launcher environment is **unverified**.
+Reopening only the TUI does not update an already-running service. Ambient
+variables outside the SOPS allowlist are not scrubbed by the direct launcher;
+that preservation is intentional for PATH/locale/host settings and is a residual
+risk. Configuration-only activation is different: the verified `opencode reload`
+was sufficient and does not require a restart.
 
 Do not create tracked `.env` files, dump auth stores, or copy `auth.json` between hosts.
 
@@ -201,6 +224,19 @@ opencode mcp auth [<name>]
 
 `<name>` is optional; choose Composio. Composio needs authentication under 2.2.5. Do
 not claim the old OAuth migrated or connected.
+
+When `COMPOSIO_CONSUMER_API_KEY` is present in the service environment, host
+initialization adds the documented `x-consumer-api-key` header to the managed
+Composio entry and sets `oauth: false`; OAuth is disabled for that entry while
+the key stays configured. Removing the key restores the managed default OAuth
+entry only if no explicit host override changes that behavior. A custom URL,
+extra headers, a populated OAuth config, or an explicitly disabled entry is
+preserved as a host override and may prevent automatic restoration. The
+persistence behavior of MCP editor `set`/`update` outside the in-memory effective
+configuration is not runtime-proven in this tree. Do not assume the consumer key
+reuses an existing Composio connection; its user/project scope and connection
+visibility are unverified. Local OAuth remains a supported fallback. Never log
+the transformed header.
 
 ## Service credentials and UI config
 

@@ -17,3 +17,44 @@ auth.json
 *.log
 logs/
 memory/
+
+# secret delivery: never commit private identities or decrypted/plaintext data
+# This is best-effort: unusual identity filenames can still be staged, and a
+# tracked file can be added explicitly. Keep the real identity outside the repo.
+*.agekey
+*.age
+age-key.txt
+identity*.txt
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.ppk
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+*.decrypted.yaml
+*.decrypted.yml
+*.plain.yaml
+*.plain.yml
+*.sops.tmp
+/.sops.yaml
+# only the canonical encrypted vault may be tracked, once the user creates it
+*.sops.yaml
+*.sops.yml
+/secrets/*
+!/secrets/opencode.sops.yaml
+
+# editor swap/backup artifacts, especially around secret editing
+*.swp
+*.swo
+*.swn
+*~
+.#*
+\#*#
+*.orig
+*.rej
+.DS_Store

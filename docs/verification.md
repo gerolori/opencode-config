@@ -17,7 +17,7 @@ Observed during activation:
 - `plugins.v2-staging/` removed; `plugins.1x-disabled/` retained.
 - Local entries are not double-listed in config.
 - Tests and typecheck were green. The latest local run after the review fixes reported
-  209 pass / 1 POSIX-only skip / 0 fail (210 tests, 8 files); this is a snapshot, not a
+  280 pass / 1 POSIX-only skip / 0 fail (281 tests, 11 files); this is a snapshot, not a
   future guarantee. No service preflight or restart was performed for this change.
 - MCP previously observed connected (not re-verified here): `context7`,
   `DuckDuckGo`, `gh_grep`, `Semble`, `SQZ`. eBay is
@@ -41,6 +41,20 @@ Observed during activation:
   `list`, `get`, `set`, `update`, and `remove`. Host initialization now seeds its view
   from `get()` because `list()` may omit a disabled entry; tests cover the asymmetric
   case and a `get()`-only custom entry is preserved.
+- Installed CLI source inspection (minified `@opencode/cli` 2.2.5 binary): the MCP
+  editor `set`/`update` path mutates an in-memory `Map` and triggers a runtime reload;
+  no tracked-config write was observed in that path. This is not a runtime persistence
+  proof, so `docs/secrets.md` does not claim proven memory-only persistence.
+- SOPS/age: the user reports that the real vault decrypted on Windows with the
+  passphrase-protected identity and a restored Bitwarden backup. This task did not read
+  the real vault, identity, or passphrase. Linux interactive prompt behavior and
+  end-to-end service restart environment inheritance remain unverified.
+- Launcher executable validation now accepts only an `opencode` basename (`opencode.exe`
+  / `opencode.cmd` on Windows) and refuses an arbitrary executable without echoing its
+  name. Tests cover the default command, explicit Windows `.exe` path, and rejection.
+  This is a name check, not binary integrity verification.
+- `.gitignore` adds common private-key extensions and editor swap/backup artifacts. It
+  remains best-effort, not comprehensive identity-path protection.
 - No credential values were read or printed; only presence booleans and fake sentinel
   values in tests were used.
 
@@ -154,7 +168,14 @@ fallback promise.
 - A real native OpenAI model id to persist.
 - TinyFish keyless vendor allowance or live success.
 - Exa keyed live success or paid-key behavior.
-- Composio authentication or workflow execution.
+- Composio authentication, consumer-key user/project scope, access to existing
+  connections, or workflow execution.
+- Whether MCP editor changes can persist resolved secrets outside the in-memory
+  effective configuration in every runtime path.
+- Linux interactive passphrase/TTY behavior for the encrypted identity.
+- That a real `opencode service restart` inherits the launcher environment, or that
+  restart preserves all intended ambient-variable behavior.
+- Comprehensive `.gitignore` protection for arbitrarily named age identities.
 - Real model-turn, tool, and Code Mode behavior after activation.
 - Session compatibility across a runtime downgrade.
 

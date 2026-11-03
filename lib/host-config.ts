@@ -5,6 +5,7 @@ import type { MCPDomain, MCPEditor } from "@opencode/plugin/promise/mcp";
 import type { Registration } from "@opencode/plugin/promise/registration";
 
 const EXA_URL = "https://mcp.exa.ai/mcp";
+const COMPOSIO_URL = "https://connect.composio.dev/mcp";
 
 export type HostMcpServer = {
   type?: "local" | "remote";
@@ -161,13 +162,38 @@ function isDisabled(value: string | undefined): boolean {
 }
 
 /**
+ * True when the Composio entry still has the tracked/default shape. A custom
+ * URL, extra headers, or a populated oauth config is a deliberate host override
+ * and must not be rewritten by consumer-key injection.
+ */
+function isManagedComposio(server: HostMcpServer): boolean {
+  if (server.type !== "remote" || server.url !== COMPOSIO_URL) return false;
+  const headerKeys = Object.keys(server.headers ?? {});
+  if (
+    headerKeys.length > 0 &&
+    !(headerKeys.length === 1 && headerKeys[0] === "x-consumer-api-key")
+  ) {
+    return false;
+  }
+  return (
+    server.oauth === undefined ||
+    server.oauth === false ||
+    (typeof server.oauth === "object" &&
+      server.oauth !== null &&
+      Object.keys(server.oauth).length === 0)
+  );
+}
+
+/**
  * Apply host-local initialization to a plain resolved config.
  *
  * Optional Exa/Semble/eBay/Home Assistant servers are added only when absent
- * and their prerequisites are present. Existing entries are never re-enabled
- * or rewritten, with one exception: the tracked eBay entry uses an env
- * placeholder and is enabled only when both the local project and credentials
- * exist. SQZ only gets the Windows executable-name adjustment.
+ * and their prerequisites are present. Composio keeps its OAuth entry by
+ * default and only gains a consumer-key header when the env var is set. Existing
+ * entries are never re-enabled or rewritten, with one exception: the tracked
+ * eBay entry uses an env placeholder and is enabled only when both the local
+ * project and credentials exist. SQZ only gets the Windows executable-name
+ * adjustment.
  */
 export function applyHostConfig(
   config: HostConfig,
@@ -241,6 +267,29 @@ export function applyHostConfig(
     };
   }
 
+  /**
+   * Composio Connect can be credentialed with a consumer key instead of local
+   * OAuth. Only the managed URL/shape is touched, a disabled entry is never
+   * re-enabled, and custom headers or URLs are treated as explicit overrides.
+   */
+  const composioKey = resolved.env.COMPOSIO_CONSUMER_API_KEY?.trim();
+  if (composioKey) {
+    const composio = servers.composio;
+    if (!composio) {
+      servers.composio = {
+        type: "remote",
+        url: COMPOSIO_URL,
+        headers: { "x-consumer-api-key": composioKey },
+        oauth: false,
+        disabled: false,
+        codemode: true,
+      };
+    } else if (!composio.disabled && isManagedComposio(composio)) {
+      composio.headers = { ...(composio.headers ?? {}), "x-consumer-api-key": composioKey };
+      composio.oauth = false;
+    }
+  }
+
   const exaKey = resolved.env.EXA_API_KEY?.trim();
   if (!servers.exa && exaKey) {
     // The post-config transform does not resolve {env:...}; interpolate the
@@ -281,7 +330,14 @@ export function applyHostConfig(
  * The retrieval extension owner calls this once during setup. The returned
  * Registration can be disposed with the extension's own lifecycle.
  */
-const HOST_MANAGED_SERVERS = ["sqz", "semble", "ebay", "exa", "home_assistant"] as const;
+const HOST_MANAGED_SERVERS = [
+  "sqz",
+  "semble",
+  "ebay",
+  "exa",
+  "composio",
+  "home_assistant",
+] as const;
 
 export async function registerHostConfig(
   context: HostConfigContext,
@@ -328,6 +384,18 @@ export async function registerHostConfig(
       } else if (name === "semble" && disableSemble) {
         editor.update(name, (target) => {
           target.disabled = true;
+        });
+      } else if (name === "composio") {
+        // Apply the consumer-key header only to the managed entry. A custom
+        // URL/header set or an explicitly disabled entry is left untouched.
+        const existing = editor.get(name);
+        const key = env.COMPOSIO_CONSUMER_API_KEY?.trim();
+        if (!existing || existing.type !== "remote" || existing.disabled || !key) continue;
+        if (!isManagedComposio(existing)) continue;
+        editor.update(name, (target) => {
+          if (target.type !== "remote") return;
+          target.headers = { ...(target.headers ?? {}), "x-consumer-api-key": key };
+          target.oauth = false;
         });
       } else if (name === "ebay") {
         // Only the resolved placeholder state is written back. A custom eBay
