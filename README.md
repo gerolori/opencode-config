@@ -426,4 +426,5 @@ smoke checks are listed in `docs/verification.md`.
 - `docs/portability.md`
 - `docs/verification.md`
 - `docs/upgrade-handoff.md`
+- `docs/sticky-retry-investigation.md`
 - `docs/templates/`
