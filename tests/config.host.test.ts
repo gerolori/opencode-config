@@ -48,19 +48,34 @@ function validDir(dir: string) {
 async function runRegistration(
   servers: Map<string, HostMcpServer>,
   options: HostConfigOptions,
-  editorOptions: { hiddenFromList?: string[] } = {},
+  editorOptions: { hiddenFromList?: string[]; cloneList?: boolean } = {},
 ) {
   const sets: string[] = [];
   const updates: string[] = [];
   const hidden = new Set(editorOptions.hiddenFromList ?? []);
+  const cloneServer = (server: HostMcpServer): HostMcpServer => ({
+    ...server,
+    command: server.command ? [...server.command] : undefined,
+    environment: server.environment ? { ...server.environment } : undefined,
+    headers: server.headers ? { ...server.headers } : undefined,
+  });
   const registration = { dispose: async () => {} };
   const context = {
     mcp: {
       transform: async (callback: (editor: any) => void) => {
         const editor = {
           // Simulates a 2.2.5 editor where list() omits a disabled entry but
-          // get() still returns the real existing entry.
-          list: () => [...servers.entries()].filter(([name]) => !hidden.has(name)),
+          // get() still returns the real existing entry. With cloneList, list()
+          // also returns copies so get() and update() are the only source of
+          // truth for the stored entry.
+          list: () =>
+            [...servers.entries()]
+              .filter(([name]) => !hidden.has(name))
+              .map(
+                ([name, server]) =>
+                  [name, editorOptions.cloneList ? cloneServer(server) : server] as const,
+              ),
+
           get: (name: string) => servers.get(name),
           set: (name: string, server: HostMcpServer) => {
             sets.push(name);
@@ -333,6 +348,65 @@ describe("host config: eBay defaults", () => {
     expect(normalize(config.mcp?.servers?.ebay?.command?.[2] ?? "")).toBe(dir);
   });
 
+  test("a second transform recognizes a resolved default path and disables it when prerequisites disappear", () => {
+    const config = baseConfig();
+    const dir = "C:/Users/me/mcp-servers/ebay";
+    const firstOptions = {
+      platform: "win32" as const,
+      env: creds,
+      homedir: "C:/Users/me",
+      ...validDir(dir),
+    };
+    applyHostConfig(config, firstOptions);
+    expect(config.mcp?.servers?.ebay?.disabled).toBe(false);
+    expect(normalize(config.mcp?.servers?.ebay?.command?.[2] ?? "")).toBe(dir);
+
+    // EBAY_MCP_DIR stays unset, so the command now contains the concrete
+    // default path. A later transform with missing credentials/project must
+    // still recognize it as managed and disable it rather than launching uv
+    // with a path that no longer exists.
+    applyHostConfig(config, {
+      platform: "win32",
+      env: {},
+      homedir: "C:/Users/me",
+      isDirectory: () => false,
+      hasFile: () => false,
+    });
+    expect(config.mcp?.servers?.ebay?.disabled).toBe(true);
+    expect(normalize(config.mcp?.servers?.ebay?.command?.[2] ?? "")).toBe(dir);
+  });
+
+  test("a second transform leaves a genuinely custom path alone when prerequisites disappear", () => {
+    const config = baseConfig();
+    if (config.mcp?.servers?.ebay) {
+      config.mcp.servers.ebay.command = ["uv", "--directory", "C:/custom/ebay", "run", "ebay-mcp"];
+      config.mcp.servers.ebay.disabled = false;
+    }
+    applyHostConfig(config, {
+      platform: "win32",
+      env: creds,
+      homedir: "C:/Users/me",
+      ...validDir("C:/custom/ebay"),
+    });
+    expect(config.mcp?.servers?.ebay?.disabled).toBe(false);
+
+    applyHostConfig(config, {
+      platform: "win32",
+      env: {},
+      homedir: "C:/Users/me",
+      isDirectory: () => false,
+      hasFile: () => false,
+    });
+    expect(config.mcp?.servers?.ebay?.disabled).toBe(false);
+    expect(config.mcp?.servers?.ebay?.command).toEqual([
+      "uv",
+      "--directory",
+      "C:/custom/ebay",
+      "run",
+      "ebay-mcp",
+    ]);
+  });
+
   test("does not rewrite a user-edited eBay path when EBAY_MCP_DIR is unset", () => {
     const config = baseConfig();
     if (config.mcp?.servers?.ebay) {
@@ -371,6 +445,100 @@ describe("host config: eBay defaults", () => {
       "run",
       "ebay-mcp",
     ]);
+  });
+
+  test("missing credentials disable an already enabled managed placeholder", () => {
+    const config = baseConfig();
+    if (config.mcp?.servers?.ebay) config.mcp.servers.ebay.disabled = false;
+    const dir = "C:/work/ebay";
+    const summary = applyHostConfig(config, {
+      platform: "win32",
+      env: { EBAY_MCP_DIR: dir },
+      ...validDir(dir),
+    });
+    expect(summary.added).not.toContain("ebay");
+    expect(config.mcp?.servers?.ebay?.disabled).toBe(true);
+    // The placeholder command is preserved so a later valid environment can
+    // resolve it; it is never launched while prerequisites are missing.
+    expect(config.mcp?.servers?.ebay?.command).toEqual([
+      "uv",
+      "--directory",
+      "{env:EBAY_MCP_DIR}",
+      "run",
+      "ebay-mcp",
+    ]);
+    expect(config.mcp?.servers?.ebay?.environment).toBeUndefined();
+  });
+
+  test("an enabled empty placeholder at the default path is disabled without credentials", () => {
+    const config = baseConfig();
+    if (config.mcp?.servers?.ebay) {
+      config.mcp.servers.ebay.command = ["uv", "--directory", "", "run", "ebay-mcp"];
+      config.mcp.servers.ebay.disabled = false;
+    }
+    const dir = "C:/Users/me/mcp-servers/ebay";
+    applyHostConfig(config, {
+      platform: "win32",
+      env: {},
+      homedir: "C:/Users/me",
+      ...validDir(dir),
+    });
+    expect(config.mcp?.servers?.ebay?.disabled).toBe(true);
+    expect(config.mcp?.servers?.ebay?.command).toEqual([
+      "uv",
+      "--directory",
+      "",
+      "run",
+      "ebay-mcp",
+    ]);
+  });
+
+  test("both credentials are required to activate an enabled managed entry", () => {
+    const dir = "C:/work/ebay";
+    for (const env of [
+      { EBAY_MCP_DIR: dir, EBAY_CLIENT_ID: creds.EBAY_CLIENT_ID },
+      { EBAY_MCP_DIR: dir, EBAY_CLIENT_SECRET: creds.EBAY_CLIENT_SECRET },
+    ]) {
+      const config = baseConfig();
+      if (config.mcp?.servers?.ebay) config.mcp.servers.ebay.disabled = false;
+      applyHostConfig(config, {
+        platform: "win32",
+        env,
+        ...validDir(dir),
+      });
+      expect(config.mcp?.servers?.ebay?.disabled).toBe(true);
+      expect(config.mcp?.servers?.ebay?.environment).toBeUndefined();
+    }
+  });
+
+  test("an enabled managed placeholder is disabled when the project path is invalid", () => {
+    const dir = "C:/work/not-ebay";
+    const config = baseConfig();
+    if (config.mcp?.servers?.ebay) config.mcp.servers.ebay.disabled = false;
+    applyHostConfig(config, {
+      platform: "win32",
+      env: { EBAY_MCP_DIR: dir, ...creds },
+      isDirectory: () => true,
+      hasFile: () => false,
+    });
+    expect(config.mcp?.servers?.ebay?.disabled).toBe(true);
+  });
+
+  test("an explicit custom enabled entry is preserved when prerequisites are missing", () => {
+    const config = baseConfig();
+    if (config.mcp?.servers?.ebay) {
+      config.mcp.servers.ebay.command = ["custom-ebay", "--sandbox"];
+      config.mcp.servers.ebay.disabled = false;
+    }
+    const summary = applyHostConfig(config, {
+      platform: "win32",
+      env: {},
+      isDirectory: () => false,
+      hasFile: () => false,
+    });
+    expect(summary.added).not.toContain("ebay");
+    expect(config.mcp?.servers?.ebay?.disabled).toBe(false);
+    expect(config.mcp?.servers?.ebay?.command).toEqual(["custom-ebay", "--sandbox"]);
   });
 
   test("invalid, remote, UNC, and non-project directories do not enable eBay", () => {
@@ -495,6 +663,207 @@ describe("host config: eBay defaults", () => {
       EBAY_CLIENT_ID: creds.EBAY_CLIENT_ID,
       EBAY_CLIENT_SECRET: creds.EBAY_CLIENT_SECRET,
     });
+  });
+
+  test("registration is idempotent: a resolved default path stays managed across transforms", async () => {
+    const dir = "C:/Users/me/mcp-servers/ebay";
+    const servers = new Map<string, HostMcpServer>([
+      [
+        "ebay",
+        {
+          type: "local",
+          command: ["uv", "--directory", "{env:EBAY_MCP_DIR}", "run", "ebay-mcp"],
+          disabled: true,
+          codemode: false,
+        },
+      ],
+    ]);
+    const first = await runRegistration(servers, {
+      platform: "win32",
+      env: creds,
+      homedir: "C:/Users/me",
+      ...validDir(dir),
+    });
+    expect(first.updates).toEqual(["ebay"]);
+    expect(servers.get("ebay")?.disabled).toBe(false);
+    expect(normalize(servers.get("ebay")?.command?.[2] ?? "")).toBe(dir);
+
+    // EBAY_MCP_DIR is still unset; the stored command now has the concrete
+    // default path. Missing prerequisites must still disable it safely.
+    const second = await runRegistration(servers, {
+      platform: "win32",
+      env: {},
+      homedir: "C:/Users/me",
+      isDirectory: () => false,
+      hasFile: () => false,
+    });
+    expect(second.sets).toEqual([]);
+    expect(second.updates).toEqual(["ebay"]);
+    expect(servers.get("ebay")?.disabled).toBe(true);
+    expect(normalize(servers.get("ebay")?.command?.[2] ?? "")).toBe(dir);
+  });
+
+  test("registration disables an enabled managed placeholder when credentials are missing", async () => {
+    const dir = "C:/work/ebay";
+    const servers = new Map<string, HostMcpServer>([
+      [
+        "ebay",
+        {
+          type: "local",
+          command: ["uv", "--directory", "{env:EBAY_MCP_DIR}", "run", "ebay-mcp"],
+          disabled: false,
+          codemode: false,
+        },
+      ],
+    ]);
+    const { sets, updates } = await runRegistration(servers, {
+      platform: "win32",
+      env: { EBAY_MCP_DIR: dir },
+      ...validDir(dir),
+    });
+    expect(sets).toEqual([]);
+    expect(updates).toEqual(["ebay"]);
+    expect(servers.get("ebay")?.disabled).toBe(true);
+    expect(servers.get("ebay")?.command).toEqual([
+      "uv",
+      "--directory",
+      "{env:EBAY_MCP_DIR}",
+      "run",
+      "ebay-mcp",
+    ]);
+  });
+
+  test("registration disables a get()-only enabled placeholder when the path is invalid", async () => {
+    const dir = "C:/work/ebay";
+    const servers = new Map<string, HostMcpServer>([
+      [
+        "ebay",
+        {
+          type: "local",
+          command: ["uv", "--directory", "", "run", "ebay-mcp"],
+          disabled: false,
+          codemode: false,
+        },
+      ],
+    ]);
+    const { sets, updates } = await runRegistration(
+      servers,
+      {
+        platform: "win32",
+        env: { EBAY_MCP_DIR: dir, ...creds },
+        isDirectory: () => true,
+        hasFile: () => false,
+      },
+      { hiddenFromList: ["ebay"] },
+    );
+    // The hidden entry is discovered through get(), then disabled in place.
+    expect(sets).toEqual([]);
+    expect(updates).toEqual(["ebay"]);
+    expect(servers.get("ebay")?.disabled).toBe(true);
+  });
+
+  test("registration preserves an enabled custom eBay entry when prerequisites are missing", async () => {
+    const servers = new Map<string, HostMcpServer>([
+      [
+        "ebay",
+        {
+          type: "local",
+          command: ["custom-ebay", "--sandbox"],
+          disabled: false,
+          codemode: false,
+        },
+      ],
+    ]);
+    const { sets, updates } = await runRegistration(servers, {
+      platform: "win32",
+      env: {},
+      isDirectory: () => false,
+      hasFile: () => false,
+    });
+    expect(sets).toEqual([]);
+    expect(updates).toEqual([]);
+    expect(servers.get("ebay")?.disabled).toBe(false);
+    expect(servers.get("ebay")?.command).toEqual(["custom-ebay", "--sandbox"]);
+  });
+
+  test("registration applies resolved command and environment when list() returns copies", async () => {
+    const dir = "C:/work/ebay";
+    const servers = new Map<string, HostMcpServer>([
+      [
+        "ebay",
+        {
+          type: "local",
+          command: ["uv", "--directory", "{env:EBAY_MCP_DIR}", "run", "ebay-mcp"],
+          environment: {
+            EBAY_CLIENT_ID: "{env:EBAY_CLIENT_ID}",
+            EBAY_CLIENT_SECRET: "{env:EBAY_CLIENT_SECRET}",
+          },
+          disabled: true,
+          codemode: false,
+        },
+      ],
+    ]);
+    const { sets, updates } = await runRegistration(
+      servers,
+      {
+        platform: "win32",
+        env: { EBAY_MCP_DIR: dir, ...creds },
+        ...validDir(dir),
+      },
+      { cloneList: true },
+    );
+    expect(sets).toEqual([]);
+    expect(updates).toEqual(["ebay"]);
+    // list() copies do not share identity with get()/update(); the transform
+    // must still write the resolved command, credentials, and enabled state.
+    expect(servers.get("ebay")?.disabled).toBe(false);
+    expect(servers.get("ebay")?.command).toEqual([
+      "uv",
+      "--directory",
+      dir,
+      "run",
+      "ebay-mcp",
+    ]);
+    expect(servers.get("ebay")?.environment).toEqual({
+      EBAY_CLIENT_ID: creds.EBAY_CLIENT_ID,
+      EBAY_CLIENT_SECRET: creds.EBAY_CLIENT_SECRET,
+    });
+  });
+
+  test("registration disables through update() when list() returns copies and credentials are missing", async () => {
+    const dir = "C:/work/ebay";
+    const servers = new Map<string, HostMcpServer>([
+      [
+        "ebay",
+        {
+          type: "local",
+          command: ["uv", "--directory", "{env:EBAY_MCP_DIR}", "run", "ebay-mcp"],
+          disabled: false,
+          codemode: false,
+        },
+      ],
+    ]);
+    const { sets, updates } = await runRegistration(
+      servers,
+      {
+        platform: "win32",
+        env: { EBAY_MCP_DIR: dir },
+        ...validDir(dir),
+      },
+      { cloneList: true },
+    );
+    expect(sets).toEqual([]);
+    expect(updates).toEqual(["ebay"]);
+    // The disabled mutation happens on the get()/update() object, not the
+    // list() copy that applyHostConfig saw.
+    expect(servers.get("ebay")?.disabled).toBe(true);
+    expect(servers.get("ebay")?.command).toEqual([
+      "uv",
+      "--directory",
+      "{env:EBAY_MCP_DIR}",
+      "run",
+      "ebay-mcp",
+    ]);
   });
 
   test("registration uses get() as source of truth when list() hides a disabled eBay entry", async () => {

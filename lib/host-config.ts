@@ -104,12 +104,17 @@ function isStandardSqzCommand(command: string[] | undefined): boolean {
  * have already replaced `{env:EBAY_MCP_DIR}` (a missing variable becomes "").
  *
  * The standard shape is managed when the directory is still the placeholder, is
- * empty, or equals the configured env override. A different absolute path is a
- * user override and is preserved.
+ * empty, equals the configured env override, or equals the default
+ * `~/mcp-servers/ebay` path produced by a prior host transform. A different
+ * absolute path is a user override and is preserved.
+ *
+ * Limitation: if EBAY_MCP_DIR is unset, a user-authored path that happens to be
+ * exactly the default path is indistinguishable from the managed default.
  */
 function isManagedEbayCommand(
   command: string[] | undefined,
   envEbayDir: string,
+  defaultDir: string,
 ): boolean {
   if (
     !Array.isArray(command) ||
@@ -123,6 +128,7 @@ function isManagedEbayCommand(
   }
   const dir = command[2] ?? "";
   if (dir === "{env:EBAY_MCP_DIR}" || dir === "") return true;
+  if (dir === defaultDir) return true;
   return envEbayDir.length > 0 && dir === envEbayDir;
 }
 
@@ -234,7 +240,8 @@ export function applyHostConfig(
 
   const disableEbay = isDisabled(resolved.env.OPENCODE_DISABLE_EBAY);
   const envEbayDir = resolved.env.EBAY_MCP_DIR?.trim() ?? "";
-  const ebayCandidate = envEbayDir || join(resolved.home, "mcp-servers", "ebay");
+  const ebayDefaultDir = join(resolved.home, "mcp-servers", "ebay");
+  const ebayCandidate = envEbayDir || ebayDefaultDir;
   const ebayProjectValid =
     isLocalDirectory(ebayCandidate, resolved.platform, resolved.isDirectory) &&
     resolved.hasFile(join(ebayCandidate, "pyproject.toml"));
@@ -248,13 +255,28 @@ export function applyHostConfig(
     // user's command and every other field.
     ebay.disabled = true;
   }
-  if (ebay && ebayValid && isManagedEbayCommand(ebay.command, envEbayDir)) {
+  const ebayManaged =
+    ebay !== undefined && isManagedEbayCommand(ebay.command, envEbayDir, ebayDefaultDir);
+  if (ebay && ebayManaged && ebayValid) {
     // Resolve the tracked placeholder only when the project and both
     // credentials exist. Values stay in memory and are never written to source
     // or logs.
+    //
+    // The transform owns the enabled state of a managed placeholder: it enables
+    // the entry once prerequisites exist, regardless of the shipped value. A
+    // managed `disabled: true` is intentionally not honored as a user disable:
+    // the config model cannot distinguish it from the tracked default. Explicit
+    // opt-out is the one-way OPENCODE_DISABLE_EBAY kill switch (or an explicit
+    // custom overlay).
     ebay.command = standardEbayCommand(ebayCandidate);
     ebay.environment = ebayEnvironment(resolved.env, ebay.environment);
     ebay.disabled = false;
+  } else if (ebay && ebayManaged) {
+    // Missing prerequisites: an enabled placeholder would launch `uv` with an
+    // empty `--directory` value (the loader turns a missing `{env:...}` into "")
+    // and exit 2. Keep the entry so a later valid environment can activate it,
+    // but never leave the managed placeholder enabled without prerequisites.
+    ebay.disabled = true;
   }
   if (!ebay && ebayValid) {
     // Absent entry: add a portable default with effective values in memory.
@@ -346,6 +368,7 @@ export async function registerHostConfig(
   const env = options.env ?? process.env;
   const disableSemble = isDisabled(env.OPENCODE_DISABLE_SEMBLE);
   const envEbayDir = env.EBAY_MCP_DIR?.trim() ?? "";
+  const ebayDefaultDir = join(options.homedir ?? homedir(), "mcp-servers", "ebay");
   return context.mcp.transform((editor: MCPEditor) => {
     // `list()` may omit a disabled entry that `get()` still returns. Seed the
     // resolved view from `get()` for every host-managed name so an existing
@@ -360,13 +383,17 @@ export async function registerHostConfig(
     }
     // The editor may expose live objects. Capture the pre-transform state so
     // updates are still reported when applyHostConfig mutates in place.
-    const prior = new Map<string, { disabled?: boolean; command?: string[] }>();
+    const prior = new Map<
+      string,
+      { disabled?: boolean; command?: string[]; environment?: Record<string, string> }
+    >();
     for (const [name, server] of Object.entries(listed)) {
       if (!server) continue;
       const command = (server as HostMcpServer).command;
       prior.set(name, {
         disabled: server.disabled,
         command: Array.isArray(command) ? [...command] : undefined,
+        environment: server.environment ? { ...server.environment } : undefined,
       });
     }
     const current: HostConfig = { mcp: { servers: listed } };
@@ -403,18 +430,29 @@ export async function registerHostConfig(
         const existing = editor.get(name);
         if (!existing || existing.type !== "local") continue;
         const original = prior.get(name);
-        const commandChanged =
+        const managedOriginal =
           original?.command !== undefined &&
-          isManagedEbayCommand(original.command, envEbayDir) &&
+          isManagedEbayCommand(original.command, envEbayDir, ebayDefaultDir);
+        const commandChanged =
+          managedOriginal &&
           server.command !== undefined &&
+          original?.command !== undefined &&
           original.command.join("\u0000") !== server.command.join("\u0000");
         const disabledChanged = original?.disabled !== server.disabled;
-        if (!commandChanged && !disabledChanged) continue;
+        const environmentChanged =
+          managedOriginal &&
+          server.environment !== undefined &&
+          JSON.stringify(original?.environment ?? {}) !== JSON.stringify(server.environment);
+        if (!commandChanged && !disabledChanged && !environmentChanged) continue;
         editor.update(name, (target) => {
           if (target.type !== "local") return;
           target.disabled = server.disabled;
           if (commandChanged && server.command !== undefined) {
             target.command = server.command;
+          }
+          if (environmentChanged && server.environment !== undefined) {
+            // In-memory only: effective credentials never reach tracked source.
+            target.environment = { ...server.environment };
           }
         });
       }

@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Schema } from "effect";
 import { Info } from "@opencode/schema/config";
+import { applyHostConfig, type HostConfig } from "../lib/host-config";
 
 const root = join(import.meta.dir, "..");
 
@@ -131,8 +132,7 @@ describe("providers and reasoning", () => {
     expect(config.providers.openrouter.package).toBe("@opencode/ai/providers/openrouter");
     expect(models["gpt-6-luna"].modelID).toBe("openai/gpt-6-luna");
     expect(models["gpt-5.6-luna"].modelID).toBe("openai/gpt-5.6-luna");
-    expect(models["deepseek-v4.1-flash-1017"].modelID).toBe("deepseek/deepseek-v4.1-flash-1017");
-    expect(models["deepseek-v4.1-flash"].modelID).toBe("deepseek/deepseek-v4.1-flash");
+    expect(models["deepseek-v4.1-flash"].modelID).toBe("deepseek/deepseek-v4.1-flash:floor");
     expect(models["gpt-6-luna"].capabilities.reasoning).toEqual({
       supported: true,
       effort: ["low", "high", "max"],
@@ -143,11 +143,7 @@ describe("providers and reasoning", () => {
   test("agent model selections use declared custom keys and variants", () => {
     expect(agents.build.model).toEqual({ providerID: "openrouter", model: "gpt-6-luna", variant: "high" });
     expect(agents.plan.model).toEqual(agents.build.model);
-    for (const name of ["code", "review", "composio"]) {
-      expect(agents[name].model.model).toBe("deepseek-v4.1-flash-1017");
-      expect(agents[name].model.variant).toBe("low");
-    }
-    for (const name of ["fetch", "explore", "track"]) {
+    for (const name of ["code", "review", "composio", "fetch", "explore", "track"]) {
       expect(agents[name].model.model).toBe("deepseek-v4.1-flash");
       expect(agents[name].model.variant).toBe("low");
     }
@@ -250,7 +246,21 @@ describe("MCP native shape", () => {
     for (const server of Object.values(servers)) {
       expect((server as any).enabled).toBeUndefined();
     }
-    expect(servers.ebay.disabled).toBe(true);
+    // `disabled` is a user-mutable UI/config toggle. Rather than asserting the
+    // current working-copy value, verify the safety invariant the host
+    // transform owns: a managed eBay entry is disabled when prerequisites are
+    // absent, regardless of the toggle the user currently has.
+    const ebayMissingPrereqs: HostConfig = {
+      mcp: { servers: { ebay: structuredClone(servers.ebay) } },
+    };
+    applyHostConfig(ebayMissingPrereqs, {
+      platform: "win32",
+      env: {},
+      homedir: "C:/Users/example",
+      isDirectory: () => false,
+      hasFile: () => false,
+    });
+    expect(ebayMissingPrereqs.mcp?.servers?.ebay?.disabled).toBe(true);
     for (const name of ["context7", "gh_grep", "sqz", "duckduckgo", "composio"]) {
       expect(servers[name].disabled).toBe(false);
     }
