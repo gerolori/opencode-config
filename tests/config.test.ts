@@ -155,9 +155,11 @@ describe("providers and reasoning", () => {
     }
   });
 
-  test("request bodies preserve per-agent temperatures", () => {
-    expect(agents.build.request.body.temperature).toBe(0.2);
-    expect(agents.plan.request.body.temperature).toBe(0.25);
+  test("build and plan omit temperature; workers preserve per-agent temperatures", () => {
+    // build/plan run reasoning-effort models where an explicit wire temperature is
+    // unsupported; omit it so the provider/model default applies.
+    expect(agents.build.request).toBeUndefined();
+    expect(agents.plan.request).toBeUndefined();
     expect(agents.code.request.body.temperature).toBe(0.35);
     expect(agents.fetch.request.body.temperature).toBe(0.1);
   });

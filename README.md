@@ -249,7 +249,11 @@ OpenAI and selects/tests a real entitled catalog model. No actual wire provider,
 entitlement, or billing test has been performed.
 
 The six worker pins are independent of the primary. Changing the main does not move
-them. `small_model` is unsupported and removed.
+them. `small_model` is unsupported and removed. `build` and `plan` do not pin a wire
+`temperature`; their reasoning variant determines sampled behavior, so a manually
+swapped primary model is not sent an unsupported sampling field. The six workers keep
+their own `temperature` overrides. Provider/model defaults and any OpenRouter
+strip/translate behavior are **not verified** on the live wire.
 
 Manual native OpenAI steps (unverified user step):
 

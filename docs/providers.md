@@ -17,6 +17,16 @@ present the configured model name as a measured provider or billing fact.
 
 `build` and `plan` are the only user-selectable primaries; `general` is absent.
 
+Sampling is intentionally left unpinned for `build` and `plan`: their config sets a
+reasoning variant (currently `high`) and no `request.body` override, so no explicit wire
+`temperature`/`top_p` is sent. Reasoning-effort models can reject or ignore an explicit
+`temperature` when reasoning effort is not `none`; omitting it lets the provider/model
+apply a valid default. The six workers keep their independent low-reasoning pins and
+per-agent `temperature` overrides. This does not describe or verify an interactive model
+swap: if a primary's model is changed manually, the temperature omission still applies,
+but OpenRouter or the upstream provider may strip, translate, or reject fields, and the
+live wire body is **not verified**.
+
 ### OpenRouter credential route
 
 `OPENROUTER_API_KEY` is optional. Local installed `@opencode/ai` source

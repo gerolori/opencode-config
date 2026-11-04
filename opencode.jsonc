@@ -178,7 +178,6 @@
     "build": {
       "description": "Primary supervising implementation agent. Owns the objective, research breadth, evidence sufficiency, and budget/extension decisions. Delegates execution and one end-to-end Composio workflow.",
       "model": { "providerID": "openrouter", "model": "gpt-6-luna", "variant": "high" },
-      "request": { "body": { "temperature": 0.2 } },
       "mode": "primary",
       "permissions": [
         { "action": "question", "resource": "*", "effect": "allow" },
@@ -208,7 +207,6 @@
     "plan": {
       "description": "Primary planning agent. Read-only; delegates exploration, retrieval, tracker operations, and one end-to-end Composio workflow. Does not delegate code.",
       "model": { "providerID": "openrouter", "model": "gpt-6-luna", "variant": "high" },
-      "request": { "body": { "temperature": 0.25 } },
       "mode": "primary",
       "permissions": [
         { "action": "question", "resource": "*", "effect": "allow" },
