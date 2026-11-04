@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync, statSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -36,7 +36,13 @@ export type SecretVaultErrorCode =
   | "invalid-vault"
   | "invalid-identity"
   | "decrypt-failed"
-  | "launch-failed";
+  | "launch-failed"
+  /** The process runner could not find the executable (for example ENOENT). */
+  | "executable-not-found"
+  /** The process runner failed to start the executable for another reason. */
+  | "spawn-failed"
+  /** A bounded non-interactive runner exceeded its timeout. */
+  | "timeout";
 
 /** Errors are deliberately generic: they never carry secret values or stderr. */
 export class SecretVaultError extends Error {
@@ -304,6 +310,12 @@ export type ProcessOptions = {
   inheritStdout?: boolean;
   /** Bounded non-interactive runtime. Never used for a passphrase prompt. */
   timeoutMs?: number;
+  /**
+   * Resolve a bare Windows service name to a concrete `.exe`/`.cmd` shim before
+   * spawning. Set only for the fixed `opencode service restart` command; never
+   * for sops/age or commands that receive user-controlled vault paths.
+   */
+  resolveWindowsExecutable?: boolean;
 };
 export type ProcessRunner = (
   command: string,
@@ -343,18 +355,155 @@ function stdioModes(options: ProcessOptions): {
   };
 }
 
+const WINDOWS_SERVICE_BASENAME = "opencode";
+
+function isRegularFile(candidate: string): boolean {
+  try {
+    return statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Locate the native binary wrapped by a standard npm shim directory. The
+ * conventional layout is `<shimDir>/node_modules/@opencode/cli/bin/opencode.exe`.
+ * The path is constructed locally (never from user input) and must be a regular
+ * file. This "direct native" strategy avoids cmd.exe entirely when available.
+ */
+function findNpmNativeSibling(directory: string): string | undefined {
+  const candidate = join(
+    directory,
+    "node_modules",
+    "@opencode",
+    "cli",
+    "bin",
+    "opencode.exe",
+  );
+  return isRegularFile(candidate) ? candidate : undefined;
+}
+
+/**
+ * Resolve a bare allowed service name on Windows to a concrete executable.
+ *
+ * PATH directory order is honored: the first directory that yields a regular
+ * file wins. Within a directory a native `.exe` is preferred over `.cmd`
+ * (matching PATHEXT order). When a `.cmd` npm shim is found, a native sibling
+ * binary in that shim's own `node_modules/@opencode/cli/bin/opencode.exe` is
+ * preferred as a safer direct-native strategy, so cmd.exe is not needed.
+ *
+ * Explicit paths (containing a separator) are returned unchanged and never
+ * rewritten. Candidates must be regular files; directories named `opencode.exe`
+ * are ignored. Non-Windows platforms are returned unchanged. This resolver is
+ * used only for the fixed `opencode service restart` command, never sops/age.
+ */
+export function resolveServiceExecutable(
+  command: string,
+  env: Record<string, string | undefined>,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform !== "win32") return command;
+  if (command === "" || /[\\/]/.test(command)) return command;
+
+  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH");
+  const rawPath = pathKey ? env[pathKey] : undefined;
+  if (typeof rawPath !== "string" || rawPath === "") return command;
+
+  const lower = command.toLowerCase();
+  const hasExe = lower.endsWith(".exe");
+  const hasCmd = lower.endsWith(".cmd");
+  const base = hasExe || hasCmd ? command.slice(0, -4) : command;
+  const extensions: readonly string[] = hasExe
+    ? [".exe"]
+    : hasCmd
+      ? [".cmd"]
+      : [".exe", ".cmd"];
+  const isServiceName = base.toLowerCase() === WINDOWS_SERVICE_BASENAME;
+
+  for (const entry of rawPath.split(";")) {
+    const directory = entry.trim().replace(/^"(.*)"$/, "$1");
+    if (directory === "") continue;
+    for (const extension of extensions) {
+      const candidate = join(directory, base + extension);
+      if (!isRegularFile(candidate)) continue;
+      if (extension.toLowerCase() === ".cmd" && isServiceName) {
+        const native = findNpmNativeSibling(directory);
+        if (native) return native;
+      }
+      return candidate;
+    }
+    if (isServiceName) {
+      const native = findNpmNativeSibling(directory);
+      if (native) return native;
+    }
+  }
+  return command;
+}
+
+export type RuntimeName = "bun" | "node";
+
+export function activeRuntime(): RuntimeName {
+  const bun = (globalThis as { Bun?: { spawn?: unknown } }).Bun;
+  return bun && typeof bun.spawn === "function" ? "bun" : "node";
+}
+
+/**
+ * Select the service executable for the active runtime. `.cmd` shims run safely
+ * under Bun. The Node fallback cannot start a `.cmd` without a shell, so a
+ * `.cmd` selection is rejected there with an actionable message recommending a
+ * trusted absolute `.exe` via `--opencode`.
+ */
+export function selectServiceExecutable(
+  command: string,
+  env: Record<string, string | undefined>,
+  runtime: RuntimeName = activeRuntime(),
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const resolved = resolveServiceExecutable(command, env, platform);
+  if (platform === "win32" && runtime === "node" && /\.cmd$/i.test(resolved)) {
+    throw new SecretVaultError(
+      "launch-failed",
+      "the Node fallback cannot start a .cmd shim without a shell; " +
+        "pass --opencode with a trusted absolute opencode.exe path",
+    );
+  }
+  return resolved;
+}
+
+/**
+ * Convert a raw spawn failure into a typed, path-free error. Callers (including
+ * the service launcher) can branch on the code without echoing the executable
+ * path or child output to the terminal.
+ */
+export function spawnError(error: unknown): SecretVaultError {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  if (code === "ENOENT") {
+    return new SecretVaultError("executable-not-found", "executable not found");
+  }
+  return new SecretVaultError("spawn-failed", "could not start process");
+}
+
 export const defaultRunner: ProcessRunner = async (command, args, env, options) => {
   const modes = stdioModes(options);
+  const resolved =
+    options.resolveWindowsExecutable === true
+      ? selectServiceExecutable(command, env)
+      : command;
   const bun = (globalThis as { Bun?: { spawn: Function } }).Bun;
 
   if (bun && typeof bun.spawn === "function") {
-    const proc = bun.spawn([command, ...args], {
-      env: compactEnv(env),
-      stdin: modes.stdin,
-      stdout: modes.stdout,
-      stderr: modes.stderr,
-      windowsHide: true,
-    });
+    let proc;
+    try {
+      proc = bun.spawn([resolved, ...args], {
+        env: compactEnv(env),
+        stdin: modes.stdin,
+        stdout: modes.stdout,
+        stderr: modes.stderr,
+        windowsHide: true,
+      });
+    } catch (error) {
+      throw spawnError(error);
+    }
     const execute = async (): Promise<ProcessResult> => {
       const stdoutPromise =
         modes.stdout === "pipe"
@@ -379,7 +528,7 @@ export const defaultRunner: ProcessRunner = async (command, args, env, options) 
             } catch {
               // The process may already be gone.
             }
-            reject(new SecretVaultError("decrypt-failed", "process timed out"));
+            reject(new SecretVaultError("timeout", "process timed out"));
           }, options.timeoutMs);
         });
         return await Promise.race([execute(), timeout]);
@@ -391,7 +540,7 @@ export const defaultRunner: ProcessRunner = async (command, args, env, options) 
       } catch {
         // The process may already be gone.
       }
-      throw error;
+      throw error instanceof SecretVaultError ? error : spawnError(error);
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -399,11 +548,17 @@ export const defaultRunner: ProcessRunner = async (command, args, env, options) 
 
   const { spawn } = await import("node:child_process");
   return await new Promise<ProcessResult>((resolve, reject) => {
-    const child = spawn(command, args, {
-      env: compactEnv(env),
-      stdio: [modes.stdin, modes.stdout, modes.stderr],
-      windowsHide: true,
-    });
+    let child;
+    try {
+      child = spawn(resolved, args, {
+        env: compactEnv(env),
+        stdio: [modes.stdin, modes.stdout, modes.stderr],
+        windowsHide: true,
+      });
+    } catch (error) {
+      reject(spawnError(error));
+      return;
+    }
     const chunks: Buffer[] = [];
     let captured = 0;
     let settled = false;
@@ -421,9 +576,7 @@ export const defaultRunner: ProcessRunner = async (command, args, env, options) 
       reject(error);
     };
 
-    child.on("error", () =>
-      fail(new SecretVaultError("decrypt-failed", "could not start process")),
-    );
+    child.on("error", (error) => fail(spawnError(error)));
     if (modes.stdout === "pipe") {
       child.stdout?.on("data", (chunk: Buffer) => {
         if (!options.captureStdout) return;
@@ -443,7 +596,7 @@ export const defaultRunner: ProcessRunner = async (command, args, env, options) 
     if (options.timeoutMs && options.timeoutMs > 0) {
       timer = setTimeout(() => {
         child.kill();
-        fail(new SecretVaultError("decrypt-failed", "process timed out"));
+        fail(new SecretVaultError("timeout", "process timed out"));
       }, options.timeoutMs);
     }
     child.on("close", (code) => {
@@ -737,10 +890,26 @@ export async function launchService(options: LaunchOptions): Promise<LaunchResul
       captureStdout: false,
       silent: true,
       timeoutMs: 60_000,
+      resolveWindowsExecutable: true,
     });
   } catch (error) {
-    if (error instanceof SecretVaultError) throw error;
-    throw new SecretVaultError("launch-failed", "could not start the service command");
+    if (error instanceof SecretVaultError) {
+      if (error.code === "executable-not-found") {
+        throw new SecretVaultError(
+          "launch-failed",
+          "the service executable was not found; check that OpenCode is installed, " +
+            "or pass --opencode with a trusted absolute path",
+        );
+      }
+      if (error.code === "spawn-failed") {
+        throw new SecretVaultError("launch-failed", "could not start the service process");
+      }
+      if (error.code === "timeout") {
+        throw new SecretVaultError("launch-failed", "the service command timed out");
+      }
+      throw error;
+    }
+    throw new SecretVaultError("launch-failed", "could not start the service process");
   }
   return { code: result.code };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -13,8 +13,11 @@ import {
   launchService,
   parseAgeIdentities,
   parseVaultYaml,
+  resolveServiceExecutable,
   SECRET_KEYS,
   SecretVaultError,
+  selectServiceExecutable,
+  spawnError,
   validateAgeIdentity,
   type ProcessRunner,
 } from "../lib/secrets/vault";
@@ -539,6 +542,402 @@ describe("service environment", () => {
     const { runner } = fakeRunner("", 7);
     const result = await launchService({ secrets: {}, runner });
     expect(result).toEqual({ code: 7 });
+  });
+});
+
+describe("Windows executable resolution", () => {
+  function tempDir(): string {
+    return mkdtempSync(join(tmpdir(), "opencode-resolve-"));
+  }
+
+  test("resolves a .cmd-only shim on PATH", () => {
+    const dir = tempDir();
+    try {
+      writeFileSync(join(dir, "opencode.cmd"), "rem fake shim\r\n", "utf8");
+      expect(resolveServiceExecutable("opencode", { Path: dir }, "win32")).toBe(
+        join(dir, "opencode.cmd"),
+      );
+      expect(resolveServiceExecutable("opencode.cmd", { Path: dir }, "win32")).toBe(
+        join(dir, "opencode.cmd"),
+      );
+      expect(resolveServiceExecutable("opencode.exe", { Path: dir }, "win32")).toBe("opencode.exe");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("honors PATH directory order: an earlier .cmd wins over a later .exe", () => {
+    const cmdDir = tempDir();
+    const exeDir = tempDir();
+    try {
+      writeFileSync(join(cmdDir, "opencode.cmd"), "rem fake shim\r\n", "utf8");
+      writeFileSync(join(exeDir, "opencode.exe"), "", "utf8");
+      expect(
+        resolveServiceExecutable("opencode", { Path: `${cmdDir};${exeDir}` }, "win32"),
+      ).toBe(join(cmdDir, "opencode.cmd"));
+    } finally {
+      rmSync(cmdDir, { recursive: true, force: true });
+      rmSync(exeDir, { recursive: true, force: true });
+    }
+  });
+
+  test("within one directory prefers .exe over .cmd (PATHEXT order)", () => {
+    const dir = tempDir();
+    try {
+      writeFileSync(join(dir, "opencode.cmd"), "rem fake shim\r\n", "utf8");
+      writeFileSync(join(dir, "opencode.exe"), "", "utf8");
+      expect(resolveServiceExecutable("opencode", { Path: dir }, "win32")).toBe(
+        join(dir, "opencode.exe"),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("discovers the npm native sibling next to a .cmd shim", () => {
+    const dir = tempDir();
+    try {
+      writeFileSync(join(dir, "opencode.cmd"), "rem fake shim\r\n", "utf8");
+      const binDir = join(dir, "node_modules", "@opencode", "cli", "bin");
+      mkdirSync(binDir, { recursive: true });
+      const native = join(binDir, "opencode.exe");
+      writeFileSync(native, "", "utf8");
+      expect(resolveServiceExecutable("opencode", { Path: dir }, "win32")).toBe(native);
+      expect(resolveServiceExecutable("opencode.cmd", { Path: dir }, "win32")).toBe(native);
+      expect(resolveServiceExecutable("opencode.exe", { Path: dir }, "win32")).toBe(native);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("ignores a directory named opencode.exe and uses a real file", () => {
+    const dir = tempDir();
+    try {
+      mkdirSync(join(dir, "opencode.exe"), { recursive: true });
+      writeFileSync(join(dir, "opencode.cmd"), "rem fake shim\r\n", "utf8");
+      expect(resolveServiceExecutable("opencode", { Path: dir }, "win32")).toBe(
+        join(dir, "opencode.cmd"),
+      );
+      // A directory alone must not be treated as a resolved executable.
+      expect(resolveServiceExecutable("opencode.exe", { Path: dir }, "win32")).toBe("opencode.exe");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves a bare opencode.exe found on PATH", () => {
+    const dir = tempDir();
+    try {
+      const native = join(dir, "opencode.exe");
+      writeFileSync(native, "", "utf8");
+      expect(resolveServiceExecutable("opencode.exe", { Path: dir }, "win32")).toBe(native);
+      expect(resolveServiceExecutable("opencode.cmd", { Path: dir }, "win32")).toBe("opencode.cmd");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("discovers a native binary directly", () => {
+    const dir = tempDir();
+    try {
+      const native = join(dir, "opencode.exe");
+      writeFileSync(native, "", "utf8");
+      expect(resolveServiceExecutable("opencode", { Path: dir }, "win32")).toBe(native);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a missing binary is returned unchanged and never invented", () => {
+    const dir = tempDir();
+    try {
+      expect(resolveServiceExecutable("opencode", { Path: dir }, "win32")).toBe("opencode");
+      expect(resolveServiceExecutable("opencode", {}, "win32")).toBe("opencode");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("explicit paths and extensions are never rewritten", () => {
+    const dir = tempDir();
+    try {
+      const absoluteCmd = join(dir, "opencode.cmd");
+      writeFileSync(absoluteCmd, "", "utf8");
+      expect(resolveServiceExecutable(absoluteCmd, { Path: dir }, "win32")).toBe(absoluteCmd);
+      expect(resolveServiceExecutable("opencode.exe", { Path: dir }, "win32")).toBe("opencode.exe");
+      expect(resolveServiceExecutable("opencode.ps1", { Path: dir }, "win32")).toBe("opencode.ps1");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("PATH matching is case-insensitive and POSIX is unchanged", () => {
+    const dir = tempDir();
+    try {
+      writeFileSync(join(dir, "opencode.cmd"), "", "utf8");
+      expect(resolveServiceExecutable("opencode", { PATH: dir }, "win32")).toBe(
+        join(dir, "opencode.cmd"),
+      );
+      expect(resolveServiceExecutable("opencode", { Path: dir }, "linux")).toBe("opencode");
+      expect(resolveServiceExecutable("opencode", { Path: dir }, "darwin")).toBe("opencode");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("quoted PATH entries are unquoted before matching", () => {
+    const dir = tempDir();
+    try {
+      const absoluteCmd = join(dir, "opencode.cmd");
+      writeFileSync(absoluteCmd, "", "utf8");
+      expect(resolveServiceExecutable("opencode", { Path: `"${dir}"` }, "win32")).toBe(
+        absoluteCmd,
+      );
+      expect(
+        resolveServiceExecutable("opencode", { Path: `"${dir}";"C:\\other"` }, "win32"),
+      ).toBe(absoluteCmd);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("service executable selection by runtime", () => {
+  test("Bun accepts a .cmd shim; Node rejects it without a shell", () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-select-"));
+    try {
+      writeFileSync(join(dir, "opencode.cmd"), "rem shim\r\n", "utf8");
+      expect(selectServiceExecutable("opencode", { Path: dir }, "bun", "win32")).toBe(
+        join(dir, "opencode.cmd"),
+      );
+      expect(() => selectServiceExecutable("opencode", { Path: dir }, "node", "win32")).toThrow(
+        /Node fallback cannot start a \.cmd shim/,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("Node fallback selects the npm native .exe when available", () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-select-native-"));
+    try {
+      writeFileSync(join(dir, "opencode.cmd"), "rem shim\r\n", "utf8");
+      const binDir = join(dir, "node_modules", "@opencode", "cli", "bin");
+      mkdirSync(binDir, { recursive: true });
+      const native = join(binDir, "opencode.exe");
+      writeFileSync(native, "", "utf8");
+      expect(selectServiceExecutable("opencode", { Path: dir }, "node", "win32")).toBe(native);
+      expect(selectServiceExecutable("opencode", { Path: dir }, "bun", "win32")).toBe(native);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("Node fallback rejects an explicit .cmd path and recommends --opencode .exe", () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-select-explicit-"));
+    try {
+      const explicit = join(dir, "opencode.cmd");
+      writeFileSync(explicit, "rem shim\r\n", "utf8");
+      expect(() => selectServiceExecutable(explicit, { Path: dir }, "node", "win32")).toThrow(
+        /trusted absolute opencode\.exe/,
+      );
+      expect(selectServiceExecutable(explicit, { Path: dir }, "bun", "win32")).toBe(explicit);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("POSIX selection is unchanged", () => {
+    expect(selectServiceExecutable("opencode", { Path: "/usr/bin" }, "node", "linux")).toBe(
+      "opencode",
+    );
+  });
+});
+
+describe("runner diagnostics", () => {
+  test("a missing executable is a typed, path-free failure", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-missing-"));
+    try {
+      let error: unknown;
+      try {
+        await defaultRunner(
+          "opencode-not-installed-sentinel",
+          [],
+          { Path: dir, PATH: dir },
+          { silent: true, captureStdout: false },
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).toBeInstanceOf(SecretVaultError);
+      expect((error as SecretVaultError).code).toBe("executable-not-found");
+      expect((error as Error).message).toBe("executable not found");
+      expect((error as Error).message).not.toContain("opencode-not-installed-sentinel");
+      expect((error as Error).message).not.toContain(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("spawns a .cmd shim found only via PATH with an explicit environment", async () => {
+    if (process.platform !== "win32") return;
+    const dir = mkdtempSync(join(tmpdir(), "opencode-cmd-"));
+    try {
+      const marker = "SENTINEL_CMD_OK";
+      writeFileSync(join(dir, "secretlaunch-fake-svc.cmd"), `@echo ${marker}\r\n`, "utf8");
+      const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
+      const system32 = join(systemRoot, "System32");
+      const path = [dir, system32].join(";");
+      const result = await defaultRunner("secretlaunch-fake-svc", [], {
+        Path: path,
+        PATH: path,
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+        ComSpec: join(system32, "cmd.exe"),
+        SystemRoot: systemRoot,
+      }, { captureStdout: true, resolveWindowsExecutable: true });
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain(marker);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("generic commands are not routed through .cmd without the service flag", async () => {
+    if (process.platform !== "win32") return;
+    const dir = mkdtempSync(join(tmpdir(), "opencode-generic-"));
+    try {
+      writeFileSync(
+        join(dir, "secretlaunch-fake-sops.cmd"),
+        "@echo SHOULD_NOT_RUN\r\n",
+        "utf8",
+      );
+      let error: unknown;
+      try {
+        // Windows process.env exposes only mixed-case `Path`; Bun's explicit-env
+        // .cmd resolution needs uppercase `PATH`, so a bare name fails here.
+        await defaultRunner(
+          "secretlaunch-fake-sops",
+          ["--version"],
+          { Path: dir },
+          { captureStdout: false, silent: true },
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).toBeInstanceOf(SecretVaultError);
+      expect((error as SecretVaultError).code).toBe("executable-not-found");
+      expect((error as Error).message).not.toContain(dir);
+      expect((error as Error).message).not.toContain("secretlaunch-fake-sops");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("raw spawn errors are typed without leaking paths or child text", () => {
+    const enoent = Object.assign(
+      new Error("ENOENT: no such file, open 'C:\\private\\secret\\opencode.cmd'"),
+      { code: "ENOENT" },
+    );
+    const missing = spawnError(enoent);
+    expect(missing).toBeInstanceOf(SecretVaultError);
+    expect(missing.code).toBe("executable-not-found");
+    expect(missing.message).toBe("executable not found");
+    expect(missing.message).not.toContain("private");
+
+    const denied = Object.assign(
+      new Error("EACCES: C:\\private\\secret\\opencode.exe"),
+      { code: "EACCES" },
+    );
+    const failed = spawnError(denied);
+    expect(failed).toBeInstanceOf(SecretVaultError);
+    expect(failed.code).toBe("spawn-failed");
+    expect(failed.message).toBe("could not start process");
+    expect(failed.message).not.toContain("private");
+  });
+
+  test("the caller-supplied environment is forwarded to the child", async () => {
+    const result = await defaultRunner(
+      process.execPath,
+      ["-e", "process.stdout.write(process.env.PROBE_SENTINEL ?? '')"],
+      { PROBE_SENTINEL: "forwarded-ok", PATH: process.env.PATH, Path: process.env.Path },
+      { captureStdout: true },
+    );
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe("forwarded-ok");
+  });
+
+  test("launchService distinguishes not-found, spawn failure, timeout, and raw errors", async () => {
+    const notFound: ProcessRunner = async () => {
+      throw new SecretVaultError("executable-not-found", "executable not found");
+    };
+    const spawnFailed: ProcessRunner = async () => {
+      throw new SecretVaultError("spawn-failed", "could not start process");
+    };
+    const timedOut: ProcessRunner = async () => {
+      throw new SecretVaultError("timeout", "process timed out");
+    };
+    const rawFailure: ProcessRunner = async () => {
+      throw new Error("SENTINEL_RAW_SPAWN_ERROR");
+    };
+
+    await expect(launchService({ secrets: {}, runner: notFound })).rejects.toThrow(
+      /service executable was not found/,
+    );
+    await expect(launchService({ secrets: {}, runner: spawnFailed })).rejects.toThrow(
+      /could not start the service process/,
+    );
+    await expect(launchService({ secrets: {}, runner: timedOut })).rejects.toThrow(
+      /service command timed out/,
+    );
+
+    let message = "";
+    try {
+      await launchService({ secrets: {}, runner: rawFailure });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain("could not start the service process");
+    expect(message).not.toContain("SENTINEL_RAW_SPAWN_ERROR");
+  });
+
+  test("launchService surfaces a real missing binary without leaking a path", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-launch-missing-"));
+    let message = "";
+    try {
+      await launchService({
+        secrets: {},
+        baseEnv: { Path: dir, PATH: dir },
+        command: ["opencode", "service", "restart"],
+      });
+    } catch (error) {
+      message = (error as Error).message;
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    expect(message).toContain("service executable was not found");
+    expect(message).not.toContain(dir);
+  });
+});
+
+describe("real harmless CLI spawn", () => {
+  test("resolves and spawns opencode --version with a dummy env", async () => {
+    if (process.platform !== "win32") return;
+    const resolved = resolveServiceExecutable("opencode", process.env, "win32");
+    if (resolved === "opencode") return;
+    expect(resolved).toMatch(/opencode\.(exe|cmd)$/i);
+    const result = await defaultRunner(
+      "opencode",
+      ["--version"],
+      {
+        Path: process.env.Path,
+        PATH: process.env.PATH,
+        SystemRoot: process.env.SystemRoot,
+        ComSpec: process.env.ComSpec,
+      },
+      { captureStdout: true, resolveWindowsExecutable: true },
+    );
+    expect(result.code).toBe(0);
+    expect(result.stdout.toLowerCase()).toContain("opencode");
   });
 });
 
