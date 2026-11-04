@@ -4,11 +4,11 @@ Status: **ACTIVATED at loader/config level**.
 
 One `opencode reload` was applied. The existing 2.2.5 background service (PID 41900)
 stayed up unchanged. No restart, migration, search/model call, auth, session read, or
-push was performed. Both idle checks returned 0.
+push was performed by that activation. Both idle checks returned 0.
 
-This handoff records loader/config verification. Real model-turn, tool, and Code Mode
-smoke checks remain pending, along with the manual OpenAI, Exa, TinyFish, and Composio
-steps below.
+This handoff records loader/config verification. Dated connector/tool checks succeeded on
+2026-11-04 (see below). Real model-turn and Code Mode contract smoke checks remain
+pending, along with the manual OpenAI step below.
 
 ## Observed activation
 
@@ -54,7 +54,8 @@ It is not restricted or reduced.
 - A real `fromPromise` adapter test exists.
 - The custom TinyFish HTTP adapter was removed.
 - `TINYFISH_API_KEY` is optional; keyless is supported under local safeguards.
-- Vendor keyless allowance and live success are not verified.
+- A live TinyFish search succeeded on 2026-11-04 (10 results); vendor keyless allowance
+  remains unverified.
 - Local caps (30/minute, 500/hour, 12,000/day) are protective counters, not a quota
   promise.
 
@@ -69,18 +70,23 @@ It is not restricted or reduced.
 
 ## MCP status
 
-Connected: `context7`, `DuckDuckGo`, `gh_grep`, `Semble`, `SQZ`.
+Dated host/session evidence (2026-11-04, after a vault-backed restart): `context7`,
+`gh_grep`, `Semble`, and `SQZ` connected and ran a search/read successfully; eBay, Exa,
+and TinyFish searches succeeded; Composio read a spreadsheet range (A1:H2); and Home
+Assistant `llm__GetDateTime` succeeded. A DuckDuckGo search was inconclusive (possible bot
+detection or no results). These are dated host/session results, not universal guarantees.
 
 - eBay is enabled (conditionally available): the host transform force-disables it when its
-  local project or credentials are missing. It is not live-verified.
-- Composio **needs authentication** under 2.2.5. Old OAuth is not claimed migrated or
-  connected.
-- Exa requires `EXA_API_KEY`; current observed status on this host is connected after a
-  vault-backed restart, with a live Exa PDF read succeeding; an Exa/TinyFish search was not
-  independently re-verified. This is host/session evidence, not a portability or permanence
-  guarantee. Home Assistant is also connected on
-  this host/session after a vault-backed restart; a live read-only `llm__GetDateTime` call
-  succeeded. That is host/session evidence, not a portability or permanence guarantee.
+  local project or credentials are missing. A read-only search returned one listing
+  (2026-11-04); historical errors remain undiagnosed.
+- Composio is authenticated on this host/session (2026-11-04); a read-only spreadsheet
+  range read (A1:H2) succeeded. Old OAuth migration is not claimed.
+- Exa requires `EXA_API_KEY`; connected on this host/session after a vault-backed restart
+  (2026-11-04), where a live Exa search (three results) and a PDF read succeeded. This is
+  dated host/session evidence, not a portability or permanence guarantee. Home Assistant is
+  also connected on this host/session after a vault-backed restart (2026-11-04); a live
+  read-only `llm__GetDateTime` call succeeded. That is dated host/session evidence, not a
+  portability or permanence guarantee.
 - No credential values were read.
 
 ## Host defaults
@@ -135,22 +141,22 @@ opencode auth switch [<target>] [<credential>]
 entitlement call, then make an approved manual config change to persist the exact id.
 Do not fabricate a subscription model id or promise fallback.
 
-Exa and TinyFish live checks remain pending until their keys/prerequisites exist. The
-strong main remains on OpenRouter `gpt-6-luna` (`openai/gpt-6-luna`, high) until the
-native OpenAI handoff succeeds. No actual wire provider, entitlement, cost, or billing
-test has been performed.
+Exa and TinyFish live searches succeeded on the dated host/session above. The strong main
+remains on OpenRouter `gpt-6-luna` (`openai/gpt-6-luna`, high) until the native OpenAI
+handoff succeeds. No actual wire provider, entitlement, cost, or billing test has been
+performed.
 
 ## Pending runtime smoke
 
 - [ ] Real model turn on the configured strong main.
 - [ ] Real model turn after native OpenAI login and model selection.
-- [ ] Governed retrieval tool call, not just loader config.
+- [x] Governed retrieval tool call, not just loader config (2026-11-04).
 - [ ] Code Mode smoke: shared outer IDs, identity queues, permission-reply cleanup,
       sibling outcomes retained.
 - [ ] Raw Code Mode `fetch` blocked and governed `webfetch` succeeds.
-- [ ] Native TinyFish live search, keyed and/or keyless as available.
-- [ ] Keyed Exa live search.
-- [ ] Composio MCP authentication and one workflow.
+- [x] Native TinyFish live search, keyed and/or keyless as available (2026-11-04).
+- [x] Keyed Exa live search (2026-11-04).
+- [x] Composio MCP authentication and one workflow (2026-11-04; read-only spreadsheet).
 - [ ] Old session reopened/attached through a new 2.2.5 client.
 - [ ] Real wire provider, entitlement, cost, and billing observation.
 

@@ -144,21 +144,21 @@ suffix, as proof that a response is a trustworthy PDF.
 Candidate governed extractors for a PDF or other non-text resource:
 
 1. `duckduckgo_fetch_content` is classified as a governed `read` and is budgeted, but it
-   is **not a verified PDF extractor**. A live check called it once on each of a Gigabyte
-   manual URL and a Corsair manual URL; both returned raw PDF binary with no extracted
-   text. Generic DuckDuckGo content fetch may therefore hand back a huge raw binary body
+   is **not a verified PDF extractor**. A live check (2026-11-04) called it once on each of
+   a Gigabyte manual URL and a Corsair manual URL; both returned raw PDF binary with no
+   extracted text. Generic DuckDuckGo content fetch may therefore hand back a huge raw binary body
    rather than parsed text, and possibly no usable text at all. Do not recommend it
    blindly or assume it will extract these manuals; treat raw binary as a failed read and
    do not paste it into context. Do not switch extractors for a blocked URL.
 2. When the Exa MCP entry is present at runtime (the host config adds it when
    `EXA_API_KEY` is set), `exa_web_fetch_exa` and `exa_crawling_exa` are governed `read`
-   providers. Bounded live evidence confirms Exa can extract text from at least one vendor
-   PDF: a Gigabyte B550I AORUS PRO AX manual (rev 1003) was read remotely with page markers,
-   with no local PDF file. This is not a guarantee of availability or extraction quality for
-   other documents. A Corsair manual URL on `manuals.coolblue.nl` returned `403`; that is a
-   site-specific access denial, not evidence that Exa cannot read PDFs. Do not retry or
-   bypass that denial. Exa reads are budgeted and may incur account costs or credit use
-   depending on the plan.
+   providers. Dated host/session evidence (2026-11-04) confirms Exa can extract text from
+   at least one vendor PDF: a Gigabyte B550I AORUS PRO AX manual (rev 1003) was read
+   remotely with page markers, with no local PDF file. This is not a guarantee of
+   availability or extraction quality for other documents. A Corsair manual URL on
+   `manuals.coolblue.nl` returned `403`; that is a site-specific access denial, not
+   evidence that Exa cannot read PDFs. Do not retry or bypass that denial. Exa reads are
+   budgeted and may incur account costs or credit use depending on the plan.
 
 ### PDF/manual decision path
 
@@ -228,10 +228,10 @@ Safety properties:
 - Keyed Exa MCP only. Requires `EXA_API_KEY`.
 - Exa reads send the requested URL to a remote service. Availability and extraction are not
   guaranteed; reads are budgeted and may incur costs or credit use depending on the plan.
-- Current observed status on this host: connected after a vault-backed restart; a live Exa
-  PDF read succeeded; an Exa/TinyFish search was not independently re-verified. This is
-  host/session evidence, not a portability or permanence guarantee; configuration still
-  requires `EXA_API_KEY`.
+- Current observed status on this host: connected after a vault-backed restart (2026-11-04);
+  a live Exa search (three results) and a PDF read succeeded. This is dated host/session
+  evidence, not a portability or permanence guarantee; configuration still requires
+  `EXA_API_KEY`.
 - Key page: `https://dashboard.exa.ai/api-keys`.
 - Free plan: recurring credit, no card, auto-recharge off.
 - Do not claim the free arrangement is guaranteed for a paid key; that account's
@@ -249,9 +249,10 @@ Safety properties:
   external providers.
 - eBay is not part of the general provider order; it is used only when an assignment is
   explicitly about eBay listings. Unknown `ebay_*` tools are denied by default.
-- Credentials present makes eBay policy-eligible (`available`, `key_configured`), but
-  `status` reports `connector_status=configured_unverified` until a successful call is
-  recorded. Do not read that as proof the MCP server is connected.
+- Credentials present makes eBay policy-eligible (`available`, `key_configured`). `status`
+  reports `connector_status=configured_unverified` until a successful call is recorded; a
+  read-only search recorded one listing on this host/session (2026-11-04). One dated
+  success is not proof of general connector health.
 
 ## Denials and limits
 

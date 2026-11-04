@@ -86,7 +86,8 @@ TinyFish:
 
 - The custom TinyFish HTTP adapter was removed.
 - Optional `TINYFISH_API_KEY`; keyless is supported under local safeguards.
-- No vendor keyless allowance and no live success has been verified.
+- A live TinyFish search succeeded on this host/session (2026-11-04, 10 results); vendor
+  keyless allowance and keyed entitlement remain unverified.
 - Local protective counters: 30/minute, 500/hour, 12,000/day. These are guards, not a
   quota promise.
 - Key page: `https://agent.tinyfish.ai/api-keys`.
@@ -94,9 +95,9 @@ TinyFish:
 ## Exa
 
 - Keyed native Exa MCP only, and only with `EXA_API_KEY`.
-- Current observed status on this host: connected after a vault-backed restart; a live Exa
-  PDF read succeeded; an Exa/TinyFish search was not independently re-verified. This is
-  host/session evidence, not a portability or permanence guarantee.
+- Current observed status on this host: connected after a vault-backed restart (2026-11-04);
+  a live Exa search (three results) and a PDF read succeeded. This is dated host/session
+  evidence, not a portability or permanence guarantee.
 - Key page: `https://dashboard.exa.ai/api-keys`.
 - Free plan: recurring credit, no card, auto-recharge off.
 - Do not claim the free arrangement is guaranteed for a paid key; that account's
@@ -112,16 +113,21 @@ TinyFish:
   read. Unknown `ebay_*` tools fail closed.
 - Requires a valid local project (`EBAY_MCP_DIR` or `~/mcp-servers/ebay`) and both
   `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` in the service environment.
-- Status: configured and conditionally available, **not verified**. Historical eBay
-  errors remain undiagnosed; no live call or account action was performed.
+- Status: configured and conditionally available. A read-only search returned one listing
+  on this host/session (2026-11-04). Historical eBay errors remain undiagnosed; do not
+  generalize one dated result into a connector-health claim. No account action was
+  performed.
 
 ## Composio
 
-- Connected MCPs at activation: `context7`, `DuckDuckGo`, `gh_grep`, `Semble`, `SQZ`.
-- eBay is configured, conditionally available, and not verified.
-- Composio **needs authentication** under 2.2.5. Old OAuth is not claimed migrated or
-  connected.
-- Manual command: `opencode mcp auth [<name>]` with the optional name; choose Composio.
+- MCPs connected/observed at activation: `context7`, `DuckDuckGo`, `gh_grep`, `Semble`,
+  `SQZ`; a DuckDuckGo search was inconclusive (possible bot detection or no results).
+- eBay is configured, conditionally available, and returned one listing on a dated
+  read-only search (2026-11-04).
+- Composio is authenticated on this host/session (2026-11-04); a read-only spreadsheet
+  range read (A1:H2) succeeded. Old OAuth migration is not claimed.
+- Manual re-authentication command: `opencode mcp auth [<name>]` with the optional name;
+  choose Composio.
 - When `COMPOSIO_CONSUMER_API_KEY` is set, the managed entry uses
   `x-consumer-api-key` and `oauth: false`; OAuth is disabled while the key remains
   configured. Removing the key restores the managed default OAuth entry only if no

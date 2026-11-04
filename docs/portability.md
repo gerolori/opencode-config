@@ -67,19 +67,19 @@ corresponding entries are absent**.
   enabled entry.
 - Otherwise explicit entries, including `disabled: true` and custom fields, are
   preserved.
-- Exa requires `EXA_API_KEY`. Current observed status on this host: connected after a
-  vault-backed restart; a live Exa PDF read succeeded. This is host/session evidence and is
-  not portable or permanent. An Exa/TinyFish search was not independently re-verified.
+- Exa requires `EXA_API_KEY`. Connected on this host/session after a vault-backed restart
+  (2026-11-04); a live Exa search (three results) and a PDF read succeeded. This is dated
+  host/session evidence and is not portable or permanent.
 - Semble requires a valid local project directory (env override or
   `~/mcp-servers/semble`), unless the kill switch is set.
 - Home Assistant requires both `HA_MCP_URL` and `HA_BEARER_TOKEN`; no personal fallback.
-  It is connected on this host/session after a vault-backed restart; a live read-only
-  `llm__GetDateTime` call succeeded. This is host/session evidence and is not portable or
-  permanent.
+  It is connected on this host/session after a vault-backed restart (2026-11-04); a live
+  read-only `llm__GetDateTime` call succeeded. This is dated host/session evidence and is
+  not portable or permanent.
 - eBay is enabled only when a valid local project (`EBAY_MCP_DIR` or
   `~/mcp-servers/ebay`) and both eBay credentials are present in the service
-  environment. `OPENCODE_DISABLE_EBAY=1` disables it. It is not live-verified, and its
-  historical errors remain undiagnosed.
+  environment. `OPENCODE_DISABLE_EBAY=1` disables it. A read-only search returned one
+  listing in this host/session (2026-11-04); its historical errors remain undiagnosed.
 
 `opencode.private.local.json` is optional and not required for the connected Semble
 instance on this host. Do not hard-code a machine path into tracked config.
