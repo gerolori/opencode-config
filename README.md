@@ -7,8 +7,9 @@ source checkout at `~/.config/opencode` (on Windows,
 > Status: **ACTIVATED at loader/config level.** Exactly one `opencode reload` was
 > applied; the existing 2.2.5 background service (PID 41900) stayed unchanged. No
 > restart, migration, search/model call, auth, session read, or push was performed by
-> that activation. Dated connector/tool checks were recorded later, on 2026-11-04; real
-> model-turn and Code Mode contract smoke checks remain pending. See `docs/verification.md`.
+> that activation. Connector/tool checks were observed in this session after a
+> vault-backed restart; real model-turn and Code Mode contract smoke checks remain
+> pending. See `docs/verification.md`.
 
 ## Runtime
 
@@ -254,12 +255,12 @@ promise automatic fallback.
 
 ## MCP status
 
-Dated host/session evidence (2026-11-04, after a vault-backed restart): `fetch` ran one
+Host/session evidence observed in this session after a vault-backed restart: `fetch` ran one
 eBay search (one listing), an Exa search (three results), and a TinyFish search (10
 results); Context7 and gh_grep searches succeeded; Composio read a spreadsheet range
 (A1:H2); and local Semble semantic search, a SQZ read, and a read-only Home Assistant
 `llm__GetDateTime` call succeeded. A DuckDuckGo search was inconclusive (possible bot
-detection or no results). These are dated host/session results, not universal guarantees.
+detection or no results). These are host/session results, not universal guarantees.
 Semble remains host-auto-detected; this change did not force-enable it or bypass its
 explicit-disable/kill-switch handling.
 
@@ -272,11 +273,11 @@ explicit-disable/kill-switch handling.
 - eBay: configured entry, conditionally available. Host initialization resolves the
   tracked placeholder and enables it only when the local project exists and both
   `EBAY_CLIENT_ID` and `EBAY_CLIENT_SECRET` are present in the service environment.
-  A read-only eBay search returned one listing in this host/session (2026-11-04). That
-  dated result is not a connector-health guarantee: the historical eBay errors
+  A read-only eBay search returned one listing in this host/session. That
+  result is not a connector-health guarantee: the historical eBay errors
   (previously 108 retained errors) remain **undiagnosed**, so do not generalize one
   listing into broad eBay coverage.
-- Composio: authenticated on this host/session (2026-11-04), where a read-only
+- Composio: authenticated on this host/session, where a read-only
   spreadsheet range read (A1:H2) succeeded. Old OAuth migration is not claimed. If it
   ever needs re-authentication, use `opencode mcp auth [<name>]` (name optional; choose
   Composio). A configured `COMPOSIO_CONSUMER_API_KEY` disables OAuth for the managed
@@ -285,12 +286,12 @@ explicit-disable/kill-switch handling.
   changes that behavior. Consumer-key scope and access to pre-existing connections are
   unverified.
 - Exa: conditional configuration requires `EXA_API_KEY`; connected on this host/session
-  after a vault-backed restart (2026-11-04), where a live Exa search (three results) and a
-  PDF read succeeded. This is dated host/session evidence, not a portability or permanence
+  after a vault-backed restart, where a live Exa search (three results) and a
+  PDF read succeeded. This is host/session evidence, not a portability or permanence
   guarantee.
-- Home Assistant: connected on this host/session after a vault-backed restart (2026-11-04);
-  a live read-only `llm__GetDateTime` call succeeded. This is dated host/session evidence,
-  not a portability or permanence guarantee.
+- Home Assistant: connected on this host/session after a vault-backed restart; a live
+  read-only `llm__GetDateTime` call succeeded and returned 2026-11-03 21:40 CET. This is
+  host/session evidence, not a portability or permanence guarantee.
 - No credential values were read.
 
 ## Keys and accounts
@@ -342,14 +343,14 @@ is enabled only when its local project and both credentials exist.
 - `OPENCODE_DISABLE_SEMBLE=1` is a real one-way kill switch, including for an explicit
   enabled entry.
 - Exa is enabled only with `EXA_API_KEY`. Connected on this host/session after a
-  vault-backed restart (2026-11-04); a live Exa search (three results) and a PDF read
+  vault-backed restart; a live Exa search (three results) and a PDF read
   succeeded. This is not a portability or permanence guarantee.
 - Semble is enabled for a valid local project directory (env override or
   `~/mcp-servers/semble`) unless disabled by the kill switch.
 - Home Assistant requires **both** `HA_MCP_URL` and `HA_BEARER_TOKEN`; there is no
-  personal fallback URL. It is connected on this host/session after a vault-backed restart
-  (2026-11-04); a live read-only `llm__GetDateTime` call succeeded. This is dated
-  host/session evidence, not a portability or permanence guarantee.
+  personal fallback URL. It is connected on this host/session after a vault-backed restart;
+  a live read-only `llm__GetDateTime` call succeeded and returned 2026-11-03 21:40 CET.
+  This is host/session evidence, not a portability or permanence guarantee.
 - eBay requires a valid local project directory (`EBAY_MCP_DIR` or
   `~/mcp-servers/ebay`) **and** both `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` in the
   service environment. `OPENCODE_DISABLE_EBAY=1` is the one-way kill switch. Missing
@@ -388,8 +389,8 @@ smoke checks are listed in `docs/verification.md`.
   verified.
 - `opencode stats` reports local/shareable usage, not vendor billing.
 - Local TinyFish caps are protective counters, not a quota guarantee.
-- Native OpenAI subscription access remains a manual check. Dated host/session evidence
-  (2026-11-04, after a vault-backed restart) recorded successful eBay, Exa, TinyFish,
+- Native OpenAI subscription access remains a manual check. Host/session evidence observed
+  in this session after a vault-backed restart recorded successful eBay, Exa, TinyFish,
   Context7, and gh_grep searches; a Composio spreadsheet read; local Semble search; a SQZ
   read; and a Home Assistant `llm__GetDateTime`. A DuckDuckGo search was inconclusive.
   These are not universal guarantees.

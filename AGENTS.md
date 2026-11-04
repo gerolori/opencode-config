@@ -2,9 +2,11 @@
 
 This file is the always-loaded index for `~/.config/opencode`. It is intentionally small.
 Open only the files relevant to the current task; never glob `memory/` or preload the whole cache.
-Runtime is OpenCode 2.2.5. Loader/config activation is complete; real model-turn/tool/
-Code Mode smoke and the manual OpenAI/Exa/TinyFish/Composio checks remain pending. See
-`README.md` and `docs/`.
+Runtime is OpenCode 2.2.5. Loader/config activation is complete. Connector/tool checks
+were observed in this session after a vault-backed restart (eBay, Exa, TinyFish, Context7,
+gh_grep, Composio, Semble, SQZ, and Home Assistant); a DuckDuckGo search was
+inconclusive. Real model-turn and Code Mode contract smoke checks, and the manual OpenAI
+check, remain pending. See `README.md` and `docs/`.
 
 ## Start here
 

@@ -19,14 +19,14 @@ Observed during activation:
 - Tests and typecheck were green. The latest local run reported 316 pass / 1 skip /
   0 fail (317 tests, 11 files); this is a snapshot, not a future guarantee. No service
   preflight or restart was performed for this change.
-- Dated host/session evidence (2026-11-04, after a vault-backed restart): `fetch` ran one
-  eBay search (one listing), an Exa search (three results), and a TinyFish search (10
-  results); Context7 and gh_grep searches succeeded; Composio read a spreadsheet range
+- Host/session evidence observed in this session after a vault-backed restart: `fetch`
+  ran one eBay search (one listing), an Exa search (three results), and a TinyFish search
+  (10 results); Context7 and gh_grep searches succeeded; Composio read a spreadsheet range
   (A1:H2); and local Semble semantic search, a SQZ read, and a read-only Home Assistant
-  `llm__GetDateTime` call succeeded. A DuckDuckGo search was inconclusive (possible bot
-  detection or no results). These are dated host/session results, not universal guarantees.
-  eBay's historical errors remain undiagnosed, so one dated listing is not a
-  connector-health guarantee.
+  `llm__GetDateTime` call succeeded (returned 2026-11-03 21:40 CET). A DuckDuckGo search
+  was inconclusive (possible bot detection or no results). These are host/session results,
+  not universal guarantees. eBay's historical errors remain undiagnosed, so one listing is
+  not a connector-health guarantee.
 - Offline policy/config tests cover eBay classification, budgets, fail-closed unknown
   tools, fetch-only access, conditional host activation, get()/list() asymmetry, and
   status connector evidence. These are not a live connector test.
@@ -62,7 +62,7 @@ Observed during activation:
   values in tests were used.
 
 Real model-turn and Code Mode contract smoke checks (shared outer IDs, identity queues,
-permission-reply cleanup) remain pending beyond the dated connector results above.
+permission-reply cleanup) remain pending beyond the connector results above.
 
 ## Safe checks
 
@@ -131,19 +131,20 @@ It reports shareable usage statistics, not vendor billing. There is no in-sessio
 
 - [ ] Real model turn on the configured strong main.
 - [ ] Native OpenAI login, actual catalog model selection, and one entitlement call.
-- [x] Retrieval tool call through the activated stack (2026-11-04).
+- [x] Retrieval tool call through the activated stack (observed in this session).
 - [ ] Code Mode: shared outer IDs, identity queues, permission-reply cleanup, sibling
       outcomes retained.
 - [ ] Raw Code Mode `fetch` blocked; governed `webfetch` succeeds.
-- [x] Native TinyFish live search (2026-11-04, 10 results).
-- [x] Keyed Exa live search (2026-11-04, three results).
-- [x] Composio MCP authentication and one workflow (2026-11-04; read-only spreadsheet).
+- [x] Native TinyFish live search (observed in this session, 10 results).
+- [x] Keyed Exa live search (observed in this session, three results).
+- [x] Composio MCP authentication and one workflow (observed in this session; read-only
+      spreadsheet).
 - [ ] Old session reopened/attached through a new 2.2.5 client.
 - [ ] Actual wire provider, entitlement, cost, and billing observation.
 
 ## Manual commands pending
 
-Composio MCP re-authentication (authenticated on 2026-11-04; run only if needed):
+Composio MCP re-authentication (authenticated in this session; run only if needed):
 
 ```text
 opencode mcp list
@@ -170,18 +171,18 @@ fallback promise.
 - Actual upstream wire provider, cost, or billing for any configured model.
 - Native OpenAI/ChatGPT subscription entitlement.
 - A real native OpenAI model id to persist.
-- TinyFish keyless vendor allowance (a live search succeeded on 2026-11-04).
-- Exa paid-key behavior (a keyed live search and PDF read succeeded on 2026-11-04).
+- TinyFish keyless vendor allowance (a live search succeeded in this session).
+- Exa paid-key behavior (a keyed live search and PDF read succeeded in this session).
 - Composio consumer-key user/project scope or access to pre-existing connections
-  (authentication and one read-only sheet range succeeded on 2026-11-04).
+  (authentication and one read-only sheet range succeeded in this session).
 - Whether MCP editor changes can persist resolved secrets outside the in-memory
   effective configuration in every runtime path.
 - Linux interactive passphrase/TTY behavior for the encrypted identity.
 - That a real `opencode service restart` inherits the launcher environment, or that
   restart preserves all intended ambient-variable behavior.
 - Comprehensive `.gitignore` protection for arbitrarily named age identities.
-- Real model-turn and Code Mode contract behavior after activation (dated connector/tool
-  calls succeeded on 2026-11-04).
+- Real model-turn and Code Mode contract behavior after activation (connector/tool
+  calls succeeded in this session).
 - Session compatibility across a runtime downgrade.
 
 ## Failure handling

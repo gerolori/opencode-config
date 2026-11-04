@@ -4,9 +4,9 @@
 
 Loader/config activation is complete on OpenCode 2.2.5. One `opencode reload` was
 applied; the existing service PID stayed unchanged. No restart or migration was
-performed. Dated connector/tool checks were recorded on 2026-11-04 (see
-`docs/verification.md`); real model-turn and Code Mode contract smoke checks remain
-pending.
+performed. Connector/tool checks were observed in this session after a vault-backed
+restart (see `docs/verification.md`); real model-turn and Code Mode contract smoke checks
+remain pending.
 
 ## Prerequisites
 
@@ -63,15 +63,15 @@ the corresponding entries are absent**.
   enabled entry.
 - Otherwise explicit entries are preserved, including `disabled: true` and custom
   fields.
-- Exa requires `EXA_API_KEY`. Connected on this host/session after a vault-backed restart
-  (2026-11-04); a live Exa search (three results) and a PDF read succeeded. This is dated
-  host/session evidence and is not portable or permanent.
+- Exa requires `EXA_API_KEY`. Connected on this host/session after a vault-backed restart;
+  a live Exa search (three results) and a PDF read succeeded. This is host/session
+  evidence and is not portable or permanent.
 - Semble requires a valid local project directory (env override or
   `~/mcp-servers/semble`), unless the kill switch is set.
 - Home Assistant requires **both** `HA_MCP_URL` and `HA_BEARER_TOKEN`; there is no
-  personal fallback URL. It is connected on this host/session after a vault-backed restart
-  (2026-11-04); a live read-only `llm__GetDateTime` call succeeded. This is dated
-  host/session evidence and is not portable or permanent.
+  personal fallback URL. It is connected on this host/session after a vault-backed restart;
+  a live read-only `llm__GetDateTime` call succeeded and returned 2026-11-03 21:40 CET.
+  This is host/session evidence and is not portable or permanent.
 - eBay is **conditionally available**: enabled only when a valid local project exists
   (`EBAY_MCP_DIR` or `~/mcp-servers/ebay`) and both `EBAY_CLIENT_ID` /
   `EBAY_CLIENT_SECRET` are in the service environment. The tracked entry ships
@@ -84,8 +84,8 @@ the corresponding entries are absent**.
   from the tracked default, so the transform may also enable a managed `disabled: true`
   entry. Use `OPENCODE_DISABLE_EBAY=1` or an explicit custom overlay (for example, a
   custom command) for an explicit opt-out.
-- eBay: a read-only search returned one listing on this host/session (2026-11-04). That
-  dated result is not a connector-health guarantee; the historical eBay errors remain
+- eBay: a read-only search returned one listing on this host/session. That
+  result is not a connector-health guarantee; the historical eBay errors remain
   undiagnosed, and configuration alone is not evidence that the connector works.
 
 Status terms: **configured** = entry present; **available** = policy-eligible
@@ -231,9 +231,9 @@ opencode mcp list
 opencode mcp auth [<name>]
 ```
 
-`<name>` is optional; choose Composio. Composio is authenticated on this host/session
-(2026-11-04); run this only if it needs re-authentication. Do not claim the old OAuth
-migrated or connected.
+`<name>` is optional; choose Composio. Composio is authenticated on this host/session;
+run this only if it needs re-authentication. Do not claim the old OAuth migrated or
+connected.
 
 When `COMPOSIO_CONSUMER_API_KEY` is present in the service environment, host
 initialization adds the documented `x-consumer-api-key` header to the managed

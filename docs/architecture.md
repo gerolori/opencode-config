@@ -193,8 +193,8 @@ is resolved and enabled only when its local project and both credentials exist.
   them. `OPENCODE_DISABLE_EBAY=1` is a one-way kill switch. The config model cannot
   distinguish a managed entry's toggle from the tracked default, so an explicit opt-out
   must use the kill switch or a custom overlay.
-- eBay's historical errors remain undiagnosed; one dated read-only search returned one
-  listing (2026-11-04), which is not a connector-health guarantee.
+- eBay's historical errors remain undiagnosed; one read-only search returned one listing,
+  which is not a connector-health guarantee.
 
 Headers stay in memory, never source or logs. `service.json` / `service.jsonc` may
 contain service credentials; they are ignored and must never be committed, printed, or
@@ -203,23 +203,23 @@ historical; do not assume it is the active location.
 
 ## MCP status
 
-Dated host/session evidence (2026-11-04, after a vault-backed restart): eBay, Exa,
+Host/session evidence observed in this session after a vault-backed restart: eBay, Exa,
 TinyFish, Context7, and gh_grep searches succeeded; Composio read a spreadsheet range
 (A1:H2); local Semble semantic search, a SQZ read, and a Home Assistant
 `llm__GetDateTime` call succeeded. A DuckDuckGo search was inconclusive (possible bot
-detection or no results). These are dated host/session results, not universal guarantees.
+detection or no results). These are host/session results, not universal guarantees.
 Semble stays host-auto-detected and explore-only.
 
-- eBay: configured, conditionally available. A read-only search returned one listing
-  (2026-11-04). Its historical errors remain undiagnosed; do not generalize one dated
-  result into a connector-health claim.
-- Composio: authenticated on this host/session (2026-11-04); one read-only spreadsheet
+- eBay: configured, conditionally available. A read-only search returned one listing.
+  Its historical errors remain undiagnosed; do not generalize one such result into a
+  connector-health claim.
+- Composio: authenticated on this host/session; one read-only spreadsheet
   range read (A1:H2) succeeded. Old OAuth migration is not claimed.
-- Exa requires `EXA_API_KEY`; connected on this host/session after a vault-backed restart
-  (2026-11-04), where a live Exa search (three results) and a PDF read succeeded. This is
-  dated host/session evidence, not a portability or permanence guarantee.
-- Home Assistant is connected on this host/session after a vault-backed restart
-  (2026-11-04); a live read-only `llm__GetDateTime` call succeeded. This is dated
+- Exa requires `EXA_API_KEY`; connected on this host/session after a vault-backed restart,
+  where a live Exa search (three results) and a PDF read succeeded. This is host/session
+  evidence, not a portability or permanence guarantee.
+- Home Assistant is connected on this host/session after a vault-backed restart; a live
+  read-only `llm__GetDateTime` call succeeded and returned 2026-11-03 21:40 CET. This is
   host/session evidence, not a portability or permanence guarantee.
 
 ## Repository hygiene
@@ -238,5 +238,5 @@ Semble stays host-auto-detected and explore-only.
 - Host defaults only fill absent server entries; explicit entries win.
 - Native OpenAI subscription selection is a manual user step and is not assumed.
 - Old sessions must be reopened/attached to pick up the new toolset.
-- Real model-turn and Code Mode contract smoke checks remain pending; dated connector
-  checks were recorded on 2026-11-04.
+- Real model-turn and Code Mode contract smoke checks remain pending; connector checks
+  were observed in this session after a vault-backed restart.
