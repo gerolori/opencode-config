@@ -202,8 +202,12 @@ suggested next providers; the agent executes normal tools.
 ### Code Mode
 
 Code Mode leaves shared outer IDs. Identity queues handle normal and permission-reply
-cleanup while retaining sibling outcomes. Raw `fetch` is blocked; page reads must use
-the governed `webfetch`. A direct/plain permission reject can emit no after hook;
+cleanup while retaining sibling outcomes. Raw `fetch` is blocked; HTML/text page reads
+must use the governed `webfetch`. Native `webfetch` rejects PDFs. Exa has bounded live
+evidence extracting one vendor PDF manual, but neither Exa nor DuckDuckGo content fetch
+guarantees usable PDF text; DuckDuckGo has returned raw PDF binary. The primary decides
+whether a likely-exact manual is worth an Exa read. See `docs/retrieval.md`. A
+direct/plain permission reject can emit no after hook;
 cleanup uses permission events plus TTL fallback and hard interrupt.
 
 ## Plugins
@@ -272,8 +276,13 @@ change did not force-enable it or bypass its explicit-disable/kill-switch handli
   set. Removing it restores the managed default OAuth entry only if no explicit host
   override (custom URL/headers, populated OAuth config, or disabled entry) changes that
   behavior. Consumer-key scope and existing-connection access are unverified.
-- Exa and Home Assistant are absent because their environment prerequisites are not
-  met.
+- Exa: conditional configuration requires `EXA_API_KEY`; current observed status on this
+  host is connected after a vault-backed restart, and a live Exa PDF read succeeded.
+  This is host/session evidence, not a portability or permanence guarantee. An Exa/TinyFish
+  search was not independently re-verified.
+- Home Assistant: connected on this host/session after a vault-backed restart; a live
+  read-only `llm__GetDateTime` call succeeded. This is host/session evidence, not a
+  portability or permanence guarantee.
 - No credential values were read.
 
 ## Keys and accounts
@@ -324,13 +333,16 @@ is enabled only when its local project and both credentials exist.
 - `opencode.host.example.jsonc` sets Semble `disabled: true` by default.
 - `OPENCODE_DISABLE_SEMBLE=1` is a real one-way kill switch, including for an explicit
   enabled entry.
-- Exa is enabled only with `EXA_API_KEY`; it is currently absent because the env
-  prerequisite is not met.
+- Exa is enabled only with `EXA_API_KEY`. Current observed status on this host: connected
+  after a vault-backed restart; a live Exa PDF read succeeded. This is not a
+  portability or permanence guarantee. An Exa/TinyFish search was not independently
+  re-verified.
 - Semble is enabled for a valid local project directory (env override or
   `~/mcp-servers/semble`) unless disabled by the kill switch.
 - Home Assistant requires **both** `HA_MCP_URL` and `HA_BEARER_TOKEN`; there is no
-  personal fallback URL, and it is currently absent because the env prerequisites are
-  not met.
+  personal fallback URL. It is connected on this host/session after a vault-backed restart;
+  a live read-only `llm__GetDateTime` call succeeded. This is host/session evidence, not a
+  portability or permanence guarantee.
 - eBay requires a valid local project directory (`EBAY_MCP_DIR` or
   `~/mcp-servers/ebay`) **and** both `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` in the
   service environment. `OPENCODE_DISABLE_EBAY=1` is the one-way kill switch. Missing
@@ -369,7 +381,10 @@ smoke checks are listed in `docs/verification.md`.
   verified.
 - `opencode stats` reports local/shareable usage, not vendor billing.
 - Local TinyFish caps are protective counters, not a quota guarantee.
-- Native OpenAI subscription access, Exa, TinyFish, and Composio remain manual checks.
+- Native OpenAI subscription access, TinyFish, and Composio remain manual checks. Exa was
+  observed connected on this host after a vault-backed restart, with a live PDF read
+  succeeding; this is not a portability or permanence guarantee. An Exa/TinyFish live search
+  remains an unchecked manual check.
 - Old sessions keep old tools until reopened/attached through a new 2.2.5 client.
 - Dynamic context pruning is a soft-nudge band, not a hard prune.
 - No VM provisioning is part of this repository.

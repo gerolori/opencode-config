@@ -22,8 +22,12 @@ Observed during activation:
 - MCP previously observed connected (not re-verified here): `context7`,
   `DuckDuckGo`, `gh_grep`, `Semble`, `SQZ`. eBay is
   configured but conditionally available and **not verified**; its historical errors
-  remain undiagnosed. Composio needs authentication; Exa and Home Assistant absent
-  because env prerequisites are not met.
+  remain undiagnosed. Composio needs authentication. Exa was observed connected after a
+  vault-backed restart and a live Exa PDF read succeeded; an Exa/TinyFish search was not
+  independently re-verified. This is host/session evidence, not a portability or permanence
+  guarantee. Home Assistant is also connected on
+  this host/session after a vault-backed restart; a live read-only `llm__GetDateTime` call
+  succeeded. That is host/session evidence, not a portability or permanence guarantee.
 - Offline policy/config tests cover eBay classification, budgets, fail-closed unknown
   tools, fetch-only access, conditional host activation, get()/list() asymmetry, and
   status connector evidence. These are not a live connector test.

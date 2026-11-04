@@ -54,6 +54,18 @@ Code Mode leaf counting: when `fetch` uses the `execute` tool to call retrieval 
 
 Require `fetch` to return readable, concise handoffs: facts with source, evidence type, freshness, gaps, and the next step. Do not ask for raw page dumps.
 
+### PDF/manual decision path
+
+If a search result looks like an exact part/model match and appears to be a vendor manual or
+spec sheet, decide whether reading it is likely to answer the question. That judgment belongs
+to the primary, which is the more capable agent and holds the task context and budget authority;
+do not make Exa PDF reads automatic or request Exa for every search. An exact-looking match does
+not by itself establish model or revision identity. If the read is worthwhile, instruct `fetch`
+to use Exa as the governed read path, verify model/revision, and cite page or section. Each Exa
+leaf read counts against the fetch read budget. If not, skip it. A blocked URL stays blocked;
+do not retry or bypass the denial. Exa sends the URL to a remote service, may be unavailable,
+and may incur costs or credit use. Do not promise that the remote service stores nothing.
+
 ### Local discovery budget
 
 For a simple local discovery assignment, give `explore` a bounded brief: the exact objective, the probable files/directories to start from, and the default budget of 8 search/list calls. Do not ask it to scan the home directory, a drive root, or the whole filesystem unless that scope is genuinely required and stated explicitly. Do not split the same search into multiple overlapping `explore` assignments to evade the budget.

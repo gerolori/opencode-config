@@ -100,7 +100,7 @@ normal tools and the policy enforces caps, circuits, and role.
 
 - General discovery: DuckDuckGo, then native TinyFish.
 - Semantic: keyed Exa MCP, then one healthy alternative.
-- Page reads: governed `webfetch`.
+- HTML/text page reads: governed `webfetch`; PDFs/non-text: a governed extractor.
 
 ## Query and retry durability
 
@@ -119,7 +119,64 @@ normal tools and the policy enforces caps, circuits, and role.
 - An invalid/malformed batch costs one blocked attempt.
 - Opaque expansion tokens are denied because the policy cannot verify the target URL.
   This includes opaque DuckDuckGo expand tokens.
-- Page reads must use the governed `webfetch`.
+- HTML/text page reads must use the governed `webfetch`.
+
+## PDFs and other non-text responses
+
+The native OpenCode 2.2.5 `webfetch` implementation has a hard-coded content-type
+allowlist. It accepts an absent content type, `text/*`, `application/json`, any `+json`,
+`application/xml`, any `+xml`, `application/javascript`, and `application/x-javascript`.
+It rejects everything else that is not an allowed image, including `application/pdf` and
+`application/octet-stream`, with:
+
+```text
+Unsupported fetched file content type: <type>
+```
+
+The check runs after the retrieval policy authorizes the call and before the body is
+returned. It is a native tool limitation, not a policy denial, but the authorized attempt
+still consumes one read. There is no `opencode.jsonc` key that extends this allowlist;
+changing it would require an upstream OpenCode change.
+
+`application/octet-stream` is a generic binary type. Do not treat it, or a `.pdf` URL
+suffix, as proof that a response is a trustworthy PDF.
+
+Candidate governed extractors for a PDF or other non-text resource:
+
+1. `duckduckgo_fetch_content` is classified as a governed `read` and is budgeted, but it
+   is **not a verified PDF extractor**. A live check called it once on each of a Gigabyte
+   manual URL and a Corsair manual URL; both returned raw PDF binary with no extracted
+   text. Generic DuckDuckGo content fetch may therefore hand back a huge raw binary body
+   rather than parsed text, and possibly no usable text at all. Do not recommend it
+   blindly or assume it will extract these manuals; treat raw binary as a failed read and
+   do not paste it into context. Do not switch extractors for a blocked URL.
+2. When the Exa MCP entry is present at runtime (the host config adds it when
+   `EXA_API_KEY` is set), `exa_web_fetch_exa` and `exa_crawling_exa` are governed `read`
+   providers. Bounded live evidence confirms Exa can extract text from at least one vendor
+   PDF: a Gigabyte B550I AORUS PRO AX manual (rev 1003) was read remotely with page markers,
+   with no local PDF file. This is not a guarantee of availability or extraction quality for
+   other documents. A Corsair manual URL on `manuals.coolblue.nl` returned `403`; that is a
+   site-specific access denial, not evidence that Exa cannot read PDFs. Do not retry or
+   bypass that denial. Exa reads are budgeted and may incur account costs or credit use
+   depending on the plan.
+
+### PDF/manual decision path
+
+Reading a PDF is a primary-model decision, not an automatic search step. When a search
+result looks like an exact part/model match and appears to be an official manual or spec
+sheet, the primary `build` or `plan` agent should judge whether the likely answer — for
+example, exact specifications or part numbers — justifies a read. An exact-looking match
+does not by itself establish model or revision identity. If the primary decides the read is
+worthwhile, instruct `fetch` to use Exa as the governed read path and require verification of
+model/revision and page or section citations. If the primary decides it is not worthwhile,
+skip the read. Never request Exa automatically for every search or every PDF. If a URL is
+blocked, stop and report it; do not switch providers or bypass the denial. Sending the URL to
+Exa discloses it to a remote service; do not promise that content is never stored anywhere.
+Each Exa leaf read counts against the fetch read budget.
+
+Native `webfetch` is unsupported for PDFs (see the allowlist above). Do not add raw Code
+Mode `fetch`, weaken the fetch-only rule, or infer PDF support from an extension. If the
+candidate extractors fail, report the limitation instead of bypassing the policy.
 
 ## Blocked resources and errors
 
@@ -136,8 +193,8 @@ cleanup while retaining sibling outcomes.
 
 - The outer `execute` is not counted as a search or read.
 - Each governed MCP leaf is counted.
-- Raw Code Mode `fetch()` is blocked by the permission guard; page reads must use the
-  governed `webfetch`.
+- Raw Code Mode `fetch()` is blocked by the permission guard; HTML/text page reads must
+  use the governed `webfetch`, and PDFs/non-text must use a governed extractor.
 - A direct/plain permission reject can emit no after hook.
 - Cleanup uses permission events plus TTL fallback and hard interrupt.
 
@@ -169,7 +226,12 @@ Safety properties:
 ## Exa
 
 - Keyed Exa MCP only. Requires `EXA_API_KEY`.
-- The Exa MCP entry is currently absent because the environment prerequisite is not met.
+- Exa reads send the requested URL to a remote service. Availability and extraction are not
+  guaranteed; reads are budgeted and may incur costs or credit use depending on the plan.
+- Current observed status on this host: connected after a vault-backed restart; a live Exa
+  PDF read succeeded; an Exa/TinyFish search was not independently re-verified. This is
+  host/session evidence, not a portability or permanence guarantee; configuration still
+  requires `EXA_API_KEY`.
 - Key page: `https://dashboard.exa.ai/api-keys`.
 - Free plan: recurring credit, no card, auto-recharge off.
 - Do not claim the free arrangement is guaranteed for a paid key; that account's

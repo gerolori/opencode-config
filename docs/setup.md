@@ -61,20 +61,27 @@ the corresponding entries are absent**.
   enabled entry.
 - Otherwise explicit entries are preserved, including `disabled: true` and custom
   fields.
-- Exa requires `EXA_API_KEY`; it is currently absent because the env prerequisite is not
-  met.
+- Exa requires `EXA_API_KEY`. Current observed status on this host: connected after a
+  vault-backed restart; a live Exa PDF read succeeded. This is host/session evidence and is
+  not portable or permanent. An Exa/TinyFish search was not independently re-verified.
 - Semble requires a valid local project directory (env override or
   `~/mcp-servers/semble`), unless the kill switch is set.
 - Home Assistant requires **both** `HA_MCP_URL` and `HA_BEARER_TOKEN`; there is no
-  personal fallback URL, and it is currently absent because the env prerequisites are
-  not met.
+  personal fallback URL. It is connected on this host/session after a vault-backed restart;
+  a live read-only `llm__GetDateTime` call succeeded. This is host/session evidence and is
+  not portable or permanent.
 - eBay is **conditionally available**: enabled only when a valid local project exists
   (`EBAY_MCP_DIR` or `~/mcp-servers/ebay`) and both `EBAY_CLIENT_ID` /
-  `EBAY_CLIENT_SECRET` are in the service environment. Missing prerequisites leave the
-  tracked entry disabled. `OPENCODE_DISABLE_EBAY=1` is a one-way kill switch. Host
+  `EBAY_CLIENT_SECRET` are in the service environment. The tracked entry ships
+  `disabled: false` (enabled); host initialization force-disables a managed entry while
+  prerequisites are missing and re-enables it when they return, so the placeholder is
+  never launched without them. `OPENCODE_DISABLE_EBAY=1` is a one-way kill switch. Host
   initialization writes the effective credential values into the in-memory MCP
   environment and omits `EBAY_ENV` when unset, so the child never receives a literal
-  `{env:...}` placeholder.
+  `{env:...}` placeholder. The config model does not distinguish a managed entry's toggle
+  from the tracked default, so the transform may also enable a managed `disabled: true`
+  entry. Use `OPENCODE_DISABLE_EBAY=1` or an explicit custom overlay (for example, a
+  custom command) for an explicit opt-out.
 - eBay is **not verified** in this tree: no live call was made, and the historical
   eBay errors remain undiagnosed. Configuration is not evidence that the connector
   works.

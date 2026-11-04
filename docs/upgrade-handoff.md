@@ -71,11 +71,16 @@ It is not restricted or reduced.
 
 Connected: `context7`, `DuckDuckGo`, `gh_grep`, `Semble`, `SQZ`.
 
-- eBay is disabled.
+- eBay is enabled (conditionally available): the host transform force-disables it when its
+  local project or credentials are missing. It is not live-verified.
 - Composio **needs authentication** under 2.2.5. Old OAuth is not claimed migrated or
   connected.
-- Exa and Home Assistant are absent because their environment prerequisites are not
-  met.
+- Exa requires `EXA_API_KEY`; current observed status on this host is connected after a
+  vault-backed restart, with a live Exa PDF read succeeding; an Exa/TinyFish search was not
+  independently re-verified. This is host/session evidence, not a portability or permanence
+  guarantee. Home Assistant is also connected on
+  this host/session after a vault-backed restart; a live read-only `llm__GetDateTime` call
+  succeeded. That is host/session evidence, not a portability or permanence guarantee.
 - No credential values were read.
 
 ## Host defaults
@@ -92,7 +97,8 @@ entries are absent.
 - Semble requires a valid local project directory or `~/mcp-servers/semble`, unless the
   kill switch is set.
 - Home Assistant requires both `HA_MCP_URL` and `HA_BEARER_TOKEN`; no personal fallback.
-- eBay remains disabled.
+- eBay is enabled; the host transform force-disables it when its local project or
+  credentials are missing.
 - Headers stay in memory, never source or logs.
 
 ## Credentials and UI files

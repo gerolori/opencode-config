@@ -94,7 +94,9 @@ TinyFish:
 ## Exa
 
 - Keyed native Exa MCP only, and only with `EXA_API_KEY`.
-- The Exa MCP entry is currently absent because the environment prerequisite is not met.
+- Current observed status on this host: connected after a vault-backed restart; a live Exa
+  PDF read succeeded; an Exa/TinyFish search was not independently re-verified. This is
+  host/session evidence, not a portability or permanence guarantee.
 - Key page: `https://dashboard.exa.ai/api-keys`.
 - Free plan: recurring credit, no card, auto-recharge off.
 - Do not claim the free arrangement is guaranteed for a paid key; that account's

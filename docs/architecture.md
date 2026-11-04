@@ -163,7 +163,11 @@ It is not restricted or reduced by this config.
 - Code Mode leaves shared outer IDs.
 - Identity queues handle normal and permission-reply cleanup while retaining sibling
   outcomes.
-- Raw `fetch` is blocked; page reads must use the governed `webfetch`.
+- Raw `fetch` is blocked; HTML/text page reads must use the governed `webfetch`.
+  Native `webfetch` rejects PDFs. Exa has bounded live evidence extracting one vendor PDF
+  manual, but PDF extraction is not guaranteed and DuckDuckGo content fetch has returned
+  raw binary. The primary decides whether a likely-exact manual justifies an Exa read. See
+  `docs/retrieval.md`.
 - A direct/plain permission reject can emit no after hook.
 - Cleanup uses permission events plus TTL fallback and hard interrupt.
 
@@ -183,8 +187,12 @@ is resolved and enabled only when its local project and both credentials exist.
 - Home Assistant requires both `HA_MCP_URL` and `HA_BEARER_TOKEN`; there is no personal
   fallback URL.
 - eBay requires a valid local project (`EBAY_MCP_DIR` or `~/mcp-servers/ebay`) and both
-  `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET`; missing prerequisites leave it disabled.
-  `OPENCODE_DISABLE_EBAY=1` is a one-way kill switch.
+  `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET`. The tracked entry ships `disabled: false`
+  (enabled); the host transform force-disables a managed entry whenever prerequisites are
+  missing and re-enables it when they return, so a placeholder is never launched without
+  them. `OPENCODE_DISABLE_EBAY=1` is a one-way kill switch. The config model cannot
+  distinguish a managed entry's toggle from the tracked default, so an explicit opt-out
+  must use the kill switch or a custom overlay.
 - eBay's historical errors remain undiagnosed and it is not live-verified.
 
 Headers stay in memory, never source or logs. `service.json` / `service.jsonc` may
@@ -201,7 +209,13 @@ Previously observed connected (not re-verified here): `context7`, `DuckDuckGo`,
   undiagnosed; do not claim a working connector without a live read-only test.
 - Composio needs authentication under 2.2.5; old OAuth is not claimed migrated or
   connected.
-- Exa and Home Assistant are absent because env prerequisites are not met.
+- Exa requires `EXA_API_KEY`; current observed status on this host is connected after a
+  vault-backed restart, with a live Exa PDF read succeeding; an Exa/TinyFish search was not
+  independently re-verified. This is host/session evidence, not a portability or permanence
+  guarantee.
+- Home Assistant is connected on this host/session after a vault-backed restart; a live
+  read-only `llm__GetDateTime` call succeeded. This is host/session evidence, not a
+  portability or permanence guarantee.
 
 ## Repository hygiene
 

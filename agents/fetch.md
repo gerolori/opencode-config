@@ -23,6 +23,11 @@ Keep at most 2 providers per query. Make one bounded transient retry within the 
 - Native web search: `websearch`. The configured provider is TinyFish; do not select a random provider.
 - Page reads: `webfetch`.
 - Semantic search: Exa through Code Mode (`execute` with `tools["exa"]`).
+- PDF/manual reads: Exa through Code Mode (`tools["exa"].web_fetch_exa`) only when the parent
+  asks after judging a likely-exact manual worthwhile. Extract text and page markers, verify
+  model/revision, and cite pages or sections. Exa may be unavailable or incur costs and sends
+  the URL to a remote service. A `403` blocks that URL: stop and report; do not retry or switch
+  providers.
 - Code search: gh_grep through Code Mode (`execute` with `tools["gh_grep"]`).
 - Library/API documentation: Context7 through Code Mode (`execute` with `tools["context7"]`).
 - General web search fallback: DuckDuckGo through Code Mode (`execute` with `tools["duckduckgo"]`).
@@ -36,6 +41,8 @@ Use `retrieval_control` with `action=status` to check actual provider availabili
 
 - Execute the requested searches unless technically impossible.
 - Fetch full pages when asked; do not rely only on snippets if the fetch succeeds.
+- Do not decide to read a PDF on your own. The parent decides whether a likely-exact manual
+  is worth an Exa read; execute only that assignment.
 - Never invent content from inaccessible pages.
 - Never provide opinions or conclusions.
 - Include a source URL for every finding.
