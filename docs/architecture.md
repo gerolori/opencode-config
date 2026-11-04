@@ -49,12 +49,16 @@ Active exactly once each:
 
 - local `plugins/retrieval-policy.ts` — id `retrieval-policy`
 - local `plugins/sqz.ts` — id `sqz`
+- local `plugins/notification-ntfy.ts` — id `notification-ntfy`
 - `@tarquinen/opencode-dcp@3.2.0` — id `opencode-dcp`
 - `cc-safety-net@2.7.2`
 
-No failed custom plugins. The four legacy optional plugins remain disabled: table
-formatter, smart title, unmoji, ntfy. Native features are not claimed to restore their
-functionality.
+No failed custom plugins. `notification-ntfy` is an opt-in 2.x local plugin
+(disabled unless `NTFY_URL` is set in the service environment) that restores
+phone notifications on root-session completion, errors, and permission asks; see
+`docs/notifications.md`. The remaining legacy optional plugins stay disabled:
+table formatter, smart title, unmoji. Native features are not claimed to restore
+their functionality.
 
 ## Delegation model
 

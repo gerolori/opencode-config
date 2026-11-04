@@ -16,8 +16,8 @@ Observed during activation:
 - No failed custom plugins.
 - `plugins.v2-staging/` removed; `plugins.1x-disabled/` retained.
 - Local entries are not double-listed in config.
-- Tests and typecheck were green. The latest local run reported 316 pass / 1 skip /
-  0 fail (317 tests, 11 files); this is a snapshot, not a future guarantee. No service
+- Tests and typecheck were green. The latest local run reported 370 pass / 1 skip /
+  0 fail (371 tests, 12 files); this is a snapshot, not a future guarantee. No service
   preflight or restart was performed for this change.
 - Host/session evidence observed in this session after a vault-backed restart: `fetch`
   ran one eBay search (one listing), an Exa search (three results), and a TinyFish search
@@ -122,7 +122,8 @@ It reports shareable usage statistics, not vendor billing. There is no in-sessio
 - [x] `cc-safety-net` 2.7.2 loaded.
 - [x] No failed custom plugins.
 - [x] `plugins.v2-staging/` removed; `plugins.1x-disabled/` retained.
-- [x] Four legacy optional plugins remain disabled.
+- [x] Three legacy optional plugins remain disabled (table formatter, smart title,
+      unmoji); ntfy is restored by the new opt-in local `notification-ntfy` plugin.
 - [x] `cli.json` is deliberately tracked.
 - [x] `service.json` / `service.jsonc` remain ignored and unprinted.
 - [x] `tui.json` remains historical.
@@ -139,6 +140,12 @@ It reports shareable usage statistics, not vendor billing. There is no in-sessio
 - [x] Keyed Exa live search (observed in this session, three results).
 - [x] Composio MCP authentication and one workflow (observed in this session; read-only
       spreadsheet).
+- [ ] ntfy plugin: with `NTFY_URL`/`NTFY_TOKEN` loaded into the service environment,
+      confirm a root-session idle, a root-session error, and a permission ask each
+      produce exactly one notification, and that child sessions do not notify.
+      Confirms `session.idle` cadence, `session.execution.failed` firing, child
+      `parentID` ordering, and service environment inheritance. See
+      `docs/notifications.md`.
 - [ ] Old session reopened/attached through a new 2.2.5 client.
 - [ ] Actual wire provider, entitlement, cost, and billing observation.
 

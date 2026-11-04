@@ -226,11 +226,24 @@ HA_MCP_URL
 HA_BEARER_TOKEN
 COMPOSIO_CONSUMER_API_KEY   optional
 OPENROUTER_API_KEY          optional
+NTFY_URL                    optional; endpoint for phone notifications
+NTFY_TOKEN                  optional; ntfy bearer token
 ```
 
 Top-level `KEY: "value"` pairs only. Nested mappings, lists, block scalars,
 duplicate keys, unknown keys, empty values, and inline comments are rejected.
 Use full-line comments or quote the value.
+
+`NTFY_URL` is itself sensitive: for ntfy the topic in the URL is a capability,
+so treat it like a credential. It must be an absolute `https://` URL; the
+notification plugin rejects plain HTTP and never logs the URL or token. Token
+handling is fail-closed: an `NTFY_TOKEN` that is present but whitespace-only, has
+leading/trailing whitespace, or contains control characters disables
+notifications rather than sending an unauthenticated publish. A truly absent
+`NTFY_TOKEN` is allowed for a public topic. The vault parser itself rejects a
+truly empty value, so an empty token cannot reach the plugin through the vault;
+an empty ambient value is also rejected by the plugin. See
+`docs/notifications.md`.
 
 ### 6. Per-machine dry run
 

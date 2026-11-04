@@ -37,8 +37,12 @@ contract smoke checks remain pending, along with the manual OpenAI step below.
 - SQZ MCP remains; do not add RTK or a second compressor.
 - The primary allows `compress`, `customize-opencode`, and `todowrite`; it needs
   `compress` for SQZ.
-- The four legacy optional plugins remain disabled: table formatter, smart title,
-  unmoji, ntfy. No native replacement is claimed to restore their functionality.
+- The remaining legacy optional plugins stay disabled: table formatter, smart title,
+  unmoji. No native replacement is claimed to restore their functionality.
+- `notification-ntfy` is a new opt-in 2.x local plugin that restores phone
+  notifications on root-session idle (completion), errors, and permission asks.
+  It is disabled unless `NTFY_URL` is present in the service environment. See
+  `docs/notifications.md`.
 
 ## Native provider catalog and TinyFish
 

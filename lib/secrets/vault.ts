@@ -21,6 +21,8 @@ export const SECRET_KEYS = [
   "HA_BEARER_TOKEN",
   "COMPOSIO_CONSUMER_API_KEY",
   "OPENROUTER_API_KEY",
+  "NTFY_URL",
+  "NTFY_TOKEN",
 ] as const;
 
 export type SecretKey = (typeof SECRET_KEYS)[number];

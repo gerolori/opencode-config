@@ -61,6 +61,10 @@ HA_MCP_URL: "https://home-assistant.example/api/mcp"
 HA_BEARER_TOKEN: "replace-me"
 COMPOSIO_CONSUMER_API_KEY: "optional-replace-me"
 OPENROUTER_API_KEY: "optional-replace-me"
+# Optional phone notifications. NTFY_URL is sensitive: the ntfy topic in the URL
+# is a capability. Use your own server/topic; never paste a real value into chat.
+NTFY_URL: "https://ntfy.example.com/<your-private-topic>"
+NTFY_TOKEN: "optional-bearer-token"
 ```
 
 Rules enforced by `scripts/secret-launch.ts`:

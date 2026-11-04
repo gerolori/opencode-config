@@ -217,6 +217,7 @@ Active, exactly once each:
 
 - local `plugins/retrieval-policy.ts` — id `retrieval-policy`
 - local `plugins/sqz.ts` — id `sqz`
+- local `plugins/notification-ntfy.ts` — id `notification-ntfy`
 - `@tarquinen/opencode-dcp@3.2.0` — id `opencode-dcp`
 - `cc-safety-net@2.7.2`
 
@@ -228,8 +229,17 @@ output and exit metadata, compresses model-visible successful content, never rew
 commands, and falls back on a hard deadline. Do not stack RTK or a second compressor.
 The primary needs the `compress` permission.
 
-The four legacy optional plugins remain disabled and are not restored by native
-replacements: table formatter, smart title, unmoji, ntfy.
+`notification-ntfy` (id `notification-ntfy`) is an opt-in 2.x local plugin that
+restores phone notifications on root-session idle (completion), errors, and
+permission asks. It is disabled unless `NTFY_URL` is present in the service
+environment (normally from the SOPS vault); the endpoint must be HTTPS; a
+present-but-invalid token fails closed (missing token is allowed for a public
+topic); child sessions are suppressed and events are deduplicated; bodies carry
+no session content, error text, or permission action; failures are nonfatal. It
+never logs the URL or token. See `docs/notifications.md`.
+
+The remaining legacy optional plugins stay disabled and are not restored by
+native replacements: table formatter, smart title, unmoji.
 
 ## Models and auth
 
@@ -405,6 +415,7 @@ smoke checks are listed in `docs/verification.md`.
 - `docs/architecture.md`
 - `docs/retrieval.md`
 - `docs/memory.md`
+- `docs/notifications.md`
 - `docs/setup.md`
 - `docs/secrets.md`
 - `docs/providers.md`
