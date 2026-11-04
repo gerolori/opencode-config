@@ -431,6 +431,25 @@ describe("spawn and extension guards", () => {
     expect(unknown.reason).toBe("agent_unknown");
   });
 
+  test("does not modify a naturally spaced subagent prompt", async () => {
+    const { engine } = await harness({ sessions });
+    engine.noteAgent("root", "build");
+    const prompt = [
+      "Objective: inspect the local retrieval policy tests.",
+      "",
+      "Scope: only tests/retrieval.policy.test.ts.",
+      "Return: a short summary with file and line references.",
+    ].join("\n");
+    const args = { prompt, agent: "explore" };
+    const snapshot = JSON.parse(JSON.stringify(args));
+
+    const decision = await before(engine, "subagent", "root", "k_prompt", args);
+
+    expect(decision.allowed).toBe(true);
+    expect(args).toEqual(snapshot);
+    expect(args.prompt).toBe(prompt);
+  });
+
   test("extends a child budget exactly once from build/plan", async () => {
     const { engine } = await harness({ sessions });
     engine.noteAgent("root", "build");

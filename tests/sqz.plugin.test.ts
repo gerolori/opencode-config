@@ -402,6 +402,30 @@ describe("2.x duplicate and scope guards", () => {
     expect(mock.calls).toHaveLength(0);
   });
 
+  test("subagent prompts are untouched", async () => {
+    const mock = createMockSpawn(() => okResult(COMPRESSED));
+    const plugin = await setupPlugin({ spawn: mock.spawn });
+    const prompt = [
+      "Objective: inspect the local retrieval policy tests.",
+      "",
+      "Scope: only tests/retrieval.policy.test.ts.",
+      "Return: a short summary with file and line references.",
+    ].join("\n");
+    const result = shellResult(prompt);
+    const event = {
+      ...completedEvent(result, { tool: "subagent", id: "call_subagent" }),
+      input: { prompt, agent: "explore" },
+    };
+    const snapshot = JSON.parse(JSON.stringify(event.input));
+
+    await plugin.invoke(event);
+
+    expect(event.input).toEqual(snapshot);
+    expect((event.input as { prompt: string }).prompt).toBe(prompt);
+    expect(contentText(result)).toEqual([prompt]);
+    expect(mock.calls).toHaveLength(0);
+  });
+
   test("shell commands invoking SQZ are skipped", async () => {
     const mock = createMockSpawn(() => okResult(COMPRESSED));
     const plugin = await setupPlugin({ spawn: mock.spawn });

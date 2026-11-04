@@ -37,6 +37,15 @@ Use the `subagent` tool:
 
 There is no `research` intermediary and no `code` delegation. `fetch` is the only worker that touches external sources.
 
+### Delegation prompt hygiene
+
+Write each `subagent` prompt as natural, human-readable prose with normal inter-word spacing.
+Use short paragraphs or line breaks to separate the objective, scope, constraints, and expected
+return format. Keep all task details; do not compress the prompt into run-together tokens or
+abbreviations. Before sending, re-read the prompt and sanity-check that words are separated and
+the structure is legible. This is a writing check, not an enforced transformation: the tooling
+does not guarantee prompt formatting.
+
 ## Research ownership
 
 You own research breadth, reasoning, evidence sufficiency, and budget/extension decisions. There is no fixed search minimum. Decide when evidence is sufficient for the plan.
