@@ -140,12 +140,18 @@ It reports shareable usage statistics, not vendor billing. There is no in-sessio
 - [x] Keyed Exa live search (observed in this session, three results).
 - [x] Composio MCP authentication and one workflow (observed in this session; read-only
       spreadsheet).
-- [ ] ntfy plugin: with `NTFY_URL`/`NTFY_TOKEN` loaded into the service environment,
-      confirm a root-session idle, a root-session error, and a permission ask each
-      produce exactly one notification, and that child sessions do not notify.
-      Confirms `session.idle` cadence, `session.execution.failed` firing, child
-      `parentID` ordering, and service environment inheritance. See
-      `docs/notifications.md`.
+- [x] ntfy plugin completion and click: user reports a root-session completion
+      notification arrived and its `Click` link opened the exact session through
+      a Tailscale MagicDNS web root. This is user-reported end-to-end success and
+      was not independently repeated here.
+- [ ] ntfy plugin error and permission paths: with `NTFY_URL`/`NTFY_TOKEN` loaded
+      into the service environment, confirm a root-session error and a permission
+      ask each produce exactly one notification, and that child sessions do not
+      notify. Confirms `session.execution.failed` firing, child `parentID`
+      ordering, and service environment inheritance. The completion and click
+      path above was user-reported; these paths were not. The legacy
+      `session.idle` type is not published by the installed 2.2.5 runtime and is
+      not subscribed to. See `docs/notifications.md`.
 - [ ] Old session reopened/attached through a new 2.2.5 client.
 - [ ] Actual wire provider, entitlement, cost, and billing observation.
 

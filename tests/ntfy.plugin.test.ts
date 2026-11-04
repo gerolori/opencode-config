@@ -3,6 +3,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NTFY_TOKEN_ENV, NTFY_URL_ENV, parseNtfyUrl, resolveNtfyConfig } from "../lib/ntfy/config";
 import {
+  buildSessionClickUrl,
+  encodeServerKey,
+  isSafeSessionId,
+  OPENCODE_WEB_URL_ENV,
+  parseOpenCodeWebUrl,
+  resolveNtfyClickConfig,
+} from "../lib/ntfy/click";
+import {
   createNtfyNotifier,
   parseNtfyEvent,
   type NtfyNotification,
@@ -290,16 +298,174 @@ describe("ntfy configuration", () => {
   });
 });
 
+describe("ntfy click links", () => {
+  const WEB = "http://opencode.example.test:1496";
+  const SERVER_KEY = "aHR0cDovL29wZW5jb2RlLmV4YW1wbGUudGVzdDoxNDk2";
+
+  test("matches the UI's key-relevant canonicalization: trim and strip trailing slashes", () => {
+    expect(parseOpenCodeWebUrl(WEB)).toBe(WEB);
+    expect(resolveNtfyClickConfig(WEB)).toEqual({ webUrl: WEB, serverKey: SERVER_KEY });
+
+    // The web UI trims and strips every trailing slash before it builds the
+    // server key, so the plugin must encode the same canonical root.
+    for (const raw of [WEB, `${WEB}/`, `${WEB}///`, ` ${WEB} `]) {
+      expect(parseOpenCodeWebUrl(raw)).toBe(WEB);
+      expect(resolveNtfyClickConfig(raw)).toEqual({ webUrl: WEB, serverKey: SERVER_KEY });
+    }
+
+    const https = "https://opencode.example.com/";
+    expect(resolveNtfyClickConfig(https)).toEqual({
+      webUrl: "https://opencode.example.com",
+      serverKey: encodeServerKey("https://opencode.example.com"),
+    });
+
+    // The explicit punycode form is ASCII and therefore accepted.
+    const punycode = "http://xn--bcher-kva.example:1496";
+    expect(parseOpenCodeWebUrl(punycode)).toBe(punycode);
+  });
+
+  test("requires an explicit http(s) scheme; never defaults to plain HTTP", () => {
+    for (const raw of ["opencode.example.test:1496", " opencode.example.test:1496 ", "opencode.example.test:1496/", "opencode.example.test"]) {
+      expect(parseOpenCodeWebUrl(raw)).toBeUndefined();
+      expect(resolveNtfyClickConfig(raw)).toBeUndefined();
+    }
+  });
+
+  test("rejects malformed, non-origin, credential, query, fragment, and non-ASCII values", () => {
+    for (const raw of [
+      undefined,
+      "",
+      " ",
+      "not a url",
+      "ftp://opencode.example.test:1496",
+      "http://opencode.example.test:1496/opencode",
+      "http://opencode.example.test:1496?x=1",
+      "http://opencode.example.test:1496#frag",
+      "http://user:pass@opencode.example.test:1496",
+      "http://opencode.example.test:1496\n",
+      // A non-ASCII host would make the Click header invalid and could lose
+      // the whole notification. Supply the punycode form explicitly instead.
+      "http://héllo.example:1496",
+      "http://例え.テスト:1496",
+    ]) {
+      expect(parseOpenCodeWebUrl(raw)).toBeUndefined();
+    }
+  });
+
+  test("builds the documented server/session route", () => {
+    const config = resolveNtfyClickConfig(WEB);
+    expect(config).toBeDefined();
+    expect(buildSessionClickUrl(config!, "ses_abc123")).toBe(
+      `${WEB}/server/${SERVER_KEY}/session/ses_abc123`,
+    );
+
+    const slash = resolveNtfyClickConfig(`${WEB}/`)!;
+    expect(slash.webUrl).toBe(WEB);
+    expect(buildSessionClickUrl(slash, "ses_abc123")).toBe(
+      `${WEB}/server/${SERVER_KEY}/session/ses_abc123`,
+    );
+  });
+
+  test("rejects unsafe session ids", () => {
+    const config = resolveNtfyClickConfig(WEB)!;
+    for (const id of [
+      "",
+      "a/b",
+      "a?b",
+      "a#b",
+      "a b",
+      "../root",
+      "%2e%2e",
+      "a".repeat(129),
+      "sé",
+      "a\u0000b",
+    ]) {
+      expect(isSafeSessionId(id)).toBe(false);
+      expect(buildSessionClickUrl(config, id)).toBeUndefined();
+    }
+    expect(isSafeSessionId("ses_AbC-123")).toBe(true);
+  });
+
+  test("adds a click to all three root notification types, never to child events", async () => {
+    const sent: NtfyNotification[] = [];
+    const config = resolveNtfyClickConfig(WEB)!;
+    const notifier = createNtfyNotifier({
+      send: async (notification) => {
+        sent.push(notification);
+      },
+      clickForSession: (sessionID) => buildSessionClickUrl(config, sessionID),
+    });
+
+    notifier.handle(event("c", "session.created", { sessionID: "child", parentID: "root" }));
+    notifier.handle(event("s", "session.execution.succeeded", { sessionID: "root" }));
+    notifier.handle(event("e", "session.execution.failed", { sessionID: "root" }));
+    notifier.handle(event("p", "permission.asked", { sessionID: "root" }));
+    notifier.handle(event("cs", "session.execution.succeeded", { sessionID: "child" }));
+    await flush();
+
+    expect(sent.map((notification) => notification.message)).toEqual([
+      "Session complete",
+      "Session error",
+      "Permission needed",
+    ]);
+    for (const notification of sent) {
+      expect(notification.click).toBe(`${WEB}/server/${SERVER_KEY}/session/root`);
+    }
+  });
+
+  test("omits the click when the builder is absent, the id is unsafe, or the builder throws", async () => {
+    const withoutBuilder = collector();
+    withoutBuilder.notifier.handle(event("a", "session.execution.succeeded", { sessionID: "root" }));
+    await flush();
+    expect(withoutBuilder.sent[0]!.click).toBeUndefined();
+
+    const config = resolveNtfyClickConfig(WEB)!;
+    const unsafe = collector();
+    const unsafeNotifier = createNtfyNotifier({
+      send: async (notification) => {
+        unsafe.sent.push(notification);
+      },
+      clickForSession: (sessionID) => buildSessionClickUrl(config, sessionID),
+    });
+    unsafeNotifier.handle(event("b", "session.execution.succeeded", { sessionID: "../escape" }));
+    await flush();
+    expect(unsafe.sent[0]!.click).toBeUndefined();
+
+    const thrown = collector();
+    const throwingNotifier = createNtfyNotifier({
+      send: async (notification) => {
+        thrown.sent.push(notification);
+      },
+      clickForSession: () => {
+        throw new Error("builder failed");
+      },
+    });
+    throwingNotifier.handle(event("c", "session.execution.succeeded", { sessionID: "root" }));
+    await flush();
+    expect(thrown.sent).toHaveLength(1);
+    expect(thrown.sent[0]!.click).toBeUndefined();
+    expect(thrown.errors).toHaveLength(0);
+  });
+});
+
 describe("ntfy event parsing", () => {
   test("recognizes the subscribed event shapes", () => {
     expect(parseNtfyEvent(event("e1", "session.created", { sessionID: "s1", parentID: "p1" }))).toEqual(
       { kind: "created", id: "e1", sessionID: "s1", parentID: "p1" },
     );
-    expect(parseNtfyEvent(event("e2", "session.idle", { sessionID: "s1" }))).toEqual({
-      kind: "idle",
-      id: "e2",
-      sessionID: "s1",
-    });
+    // Exact installed 2.2.5 `session.execution.succeeded` envelope: durable
+    // metadata and location are present, but `data` carries only `sessionID`.
+    expect(
+      parseNtfyEvent({
+        id: "e2",
+        created: 1,
+        metadata: {},
+        type: "session.execution.succeeded",
+        durable: { aggregateID: "s1", seq: 1, version: 1 },
+        location: { directory: "C:\\work" },
+        data: { sessionID: "s1" },
+      }),
+    ).toEqual({ kind: "success", id: "e2", sessionID: "s1" });
     expect(parseNtfyEvent(event("e3", "permission.asked", { sessionID: "s1", action: "shell" }))).toEqual({
       kind: "permission",
       id: "e3",
@@ -319,12 +485,13 @@ describe("ntfy event parsing", () => {
     expect(parseNtfyEvent(null)).toBeUndefined();
     expect(parseNtfyEvent("text")).toBeUndefined();
     expect(parseNtfyEvent({})).toBeUndefined();
-    expect(parseNtfyEvent({ id: "x", type: "session.idle" })).toBeUndefined();
-    expect(parseNtfyEvent({ id: "x", type: "session.idle", data: {} })).toBeUndefined();
-    expect(parseNtfyEvent({ type: "session.idle", data: { sessionID: "s" } })).toBeUndefined();
+    expect(parseNtfyEvent({ id: "x", type: "session.execution.succeeded" })).toBeUndefined();
+    expect(parseNtfyEvent({ id: "x", type: "session.execution.succeeded", data: {} })).toBeUndefined();
+    expect(parseNtfyEvent({ type: "session.execution.succeeded", data: { sessionID: "s" } })).toBeUndefined();
     expect(parseNtfyEvent(event("x", "session.deleted", { sessionID: "s" }))).toBeUndefined();
+    // The legacy idle type is not published by the 2.2.5 runtime and is ignored.
+    expect(parseNtfyEvent(event("x", "session.idle", { sessionID: "s" }))).toBeUndefined();
     // Sibling execution events are not subscribed to.
-    expect(parseNtfyEvent(event("x", "session.execution.succeeded", { sessionID: "s" }))).toBeUndefined();
     expect(
       parseNtfyEvent(event("x", "session.execution.interrupted", { sessionID: "s", reason: "user" })),
     ).toBeUndefined();
@@ -345,23 +512,34 @@ describe("ntfy event parsing", () => {
 });
 
 describe("ntfy notifier", () => {
-  test("notifies on a root session idle", async () => {
+  test("notifies on a root session success", async () => {
     const { notifier, sent } = collector();
-    notifier.handle(event("e1", "session.idle", { sessionID: "root" }));
+    notifier.handle(event("e1", "session.execution.succeeded", { sessionID: "root" }));
     await flush();
     expect(sent).toHaveLength(1);
     expect(sent[0]).toEqual({
       title: "OpenCode",
-      message: "Session idle",
+      message: "Session complete",
       priority: "default",
       tags: ["white_check_mark"],
     });
   });
 
-  test("suppresses idle, error, and permission events from child sessions", async () => {
+  test("ignores the legacy idle event and does not double-notify a turn", async () => {
+    const { notifier, sent } = collector();
+    // A runtime that emitted both terminal events for one turn must still
+    // produce exactly one completion alert.
+    notifier.handle(event("s1", "session.execution.succeeded", { sessionID: "root" }));
+    notifier.handle(event("i1", "session.idle", { sessionID: "root" }));
+    await flush();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.message).toBe("Session complete");
+  });
+
+  test("suppresses success, error, and permission events from child sessions", async () => {
     const { notifier, sent } = collector();
     notifier.handle(event("c1", "session.created", { sessionID: "child", parentID: "root" }));
-    notifier.handle(event("i1", "session.idle", { sessionID: "child" }));
+    notifier.handle(event("i1", "session.execution.succeeded", { sessionID: "child" }));
     notifier.handle(event("x1", "session.execution.failed", { sessionID: "child", error: { message: "boom" } }));
     notifier.handle(event("p1", "permission.asked", { sessionID: "child", action: "shell" }));
     await flush();
@@ -409,7 +587,7 @@ describe("ntfy notifier", () => {
 
   test("deduplicates the same event id", async () => {
     const { notifier, sent } = collector();
-    const duplicated = event("same", "session.idle", { sessionID: "root" });
+    const duplicated = event("same", "session.execution.succeeded", { sessionID: "root" });
     notifier.handle(duplicated);
     notifier.handle(duplicated);
     await flush();
@@ -419,7 +597,7 @@ describe("ntfy notifier", () => {
   test("seedChildren suppresses sessions known before a reload", async () => {
     const { notifier, sent } = collector();
     notifier.seedChildren(["child-a", "child-b"]);
-    notifier.handle(event("i1", "session.idle", { sessionID: "child-a" }));
+    notifier.handle(event("i1", "session.execution.succeeded", { sessionID: "child-a" }));
     notifier.handle(event("x1", "session.execution.failed", { sessionID: "child-a", error: {} }));
     notifier.handle(event("p1", "permission.asked", { sessionID: "child-b", action: "edit" }));
     await flush();
@@ -437,10 +615,10 @@ describe("ntfy notifier", () => {
     notifier.seedChildren(["child-1", "child-2", "child-3"]);
 
     // child-3 and child-2 remain tracked.
-    notifier.handle(event("i3", "session.idle", { sessionID: "child-3" }));
-    notifier.handle(event("i2", "session.idle", { sessionID: "child-2" }));
+    notifier.handle(event("i3", "session.execution.succeeded", { sessionID: "child-3" }));
+    notifier.handle(event("i2", "session.execution.succeeded", { sessionID: "child-2" }));
     // child-1 was evicted, so it is no longer suppressed.
-    notifier.handle(event("i1", "session.idle", { sessionID: "child-1" }));
+    notifier.handle(event("i1", "session.execution.succeeded", { sessionID: "child-1" }));
     await flush();
 
     expect(sent).toHaveLength(1);
@@ -454,7 +632,7 @@ describe("ntfy notifier", () => {
       },
       onError: (error) => errors.push(error),
     });
-    expect(() => notifier.handle(event("e1", "session.idle", { sessionID: "root" }))).not.toThrow();
+    expect(() => notifier.handle(event("e1", "session.execution.succeeded", { sessionID: "root" }))).not.toThrow();
     await flush();
     expect(errors).toHaveLength(1);
     expect((errors[0] as Error).message).toBe("network down");
@@ -469,10 +647,10 @@ describe("ntfy notifier", () => {
         throw new Error("sink failed");
       },
     });
-    expect(() => notifier.handle(event("e1", "session.idle", { sessionID: "root" }))).not.toThrow();
+    expect(() => notifier.handle(event("e1", "session.execution.succeeded", { sessionID: "root" }))).not.toThrow();
     await flush();
     // Still usable after the sink threw.
-    expect(() => notifier.handle(event("e2", "session.idle", { sessionID: "root" }))).not.toThrow();
+    expect(() => notifier.handle(event("e2", "session.execution.succeeded", { sessionID: "root" }))).not.toThrow();
     await flush();
   });
 });
@@ -489,7 +667,7 @@ describe("ntfy publisher", () => {
       url: VALID_URL,
       token: "tk_secret",
       title: "OpenCode",
-      message: "Session idle",
+      message: "Session complete",
       priority: "default",
       tags: ["white_check_mark"],
     });
@@ -497,12 +675,48 @@ describe("ntfy publisher", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe(VALID_URL);
     expect(calls[0]!.init.method).toBe("POST");
-    expect(calls[0]!.init.body).toBe("Session idle");
+    expect(calls[0]!.init.body).toBe("Session complete");
     expect(calls[0]!.init.headers).toEqual({
       Title: "OpenCode",
       Priority: "default",
       Tags: "white_check_mark",
       Authorization: "Bearer tk_secret",
+    });
+  });
+
+  test("sends a Click header only when a click URL is supplied", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const fetchImpl: NtfyFetch = async (_url, init) => {
+      calls.push(init.headers);
+      return { ok: true };
+    };
+    const publish = createFetchPublisher(fetchImpl);
+    const click = "http://opencode.example.test:1496/server/aHR0cDovL29wZW5jb2RlLmV4YW1wbGUudGVzdDoxNDk2/session/ses_abc";
+    await publish({
+      url: VALID_URL,
+      title: "OpenCode",
+      message: "Session complete",
+      priority: "default",
+      tags: [],
+      click,
+    });
+    await publish({
+      url: VALID_URL,
+      title: "OpenCode",
+      message: "Session complete",
+      priority: "default",
+      tags: [],
+    });
+    expect(calls[0]).toEqual({
+      Title: "OpenCode",
+      Priority: "default",
+      Tags: "",
+      Click: click,
+    });
+    expect(calls[1]).toEqual({
+      Title: "OpenCode",
+      Priority: "default",
+      Tags: "",
     });
   });
 
@@ -515,7 +729,7 @@ describe("ntfy publisher", () => {
     await createFetchPublisher(fetchImpl)({
       url: VALID_URL,
       title: "OpenCode",
-      message: "Session idle",
+      message: "Session complete",
       priority: "high",
       tags: ["warning"],
     });
@@ -529,7 +743,7 @@ describe("ntfy publisher", () => {
       await createFetchPublisher(fetchImpl)({
         url: VALID_URL,
         title: "OpenCode",
-        message: "Session idle",
+        message: "Session complete",
         priority: "default",
         tags: [],
       });
@@ -545,7 +759,7 @@ describe("ntfy publisher", () => {
     const request = {
       url: VALID_URL,
       title: "OpenCode",
-      message: "Session idle",
+      message: "Session complete",
       priority: "default" as const,
       tags: [],
     };
@@ -586,7 +800,7 @@ describe("ntfy publisher", () => {
     const pending = publish({
       url: VALID_URL,
       title: "OpenCode",
-      message: "Session idle",
+      message: "Session complete",
       priority: "default",
       tags: [],
     });
@@ -607,7 +821,7 @@ describe("ntfy publisher", () => {
       createFetchPublisher(fetchImpl, { signal: lifecycle.signal })({
         url: VALID_URL,
         title: "OpenCode",
-        message: "Session idle",
+        message: "Session complete",
         priority: "default",
         tags: [],
       }),
@@ -667,6 +881,65 @@ describe("ntfy plugin wiring", () => {
     cleanup?.();
   });
 
+  test("adds configured click links to all root events; an unset or invalid web URL omits them", async () => {
+    const clicked: Array<Record<string, unknown>> = [];
+    const recorder: NtfyFetch = async (_url, init) => {
+      clicked.push(init.headers);
+      return { ok: true };
+    };
+    const web = "http://opencode.example.test:1496";
+    const serverKey = encodeServerKey(web);
+    const events = [
+      event("s", "session.execution.succeeded", { sessionID: "ses_root" }),
+      event("e", "session.execution.failed", { sessionID: "ses_root" }),
+      event("p", "permission.asked", { sessionID: "ses_root" }),
+    ];
+    const withClick = fakeFetchContext(events);
+    const cleanup = await startNtfyNotifications(withClick.context, {
+      env: { [NTFY_URL_ENV]: VALID_URL, [OPENCODE_WEB_URL_ENV]: web },
+      fetch: recorder,
+    });
+    await flush();
+    cleanup?.();
+
+    expect(clicked).toHaveLength(3);
+    for (const headers of clicked) {
+      expect(headers.Click).toBe(`${web}/server/${serverKey}/session/ses_root`);
+    }
+
+    // Without OPENCODE_WEB_URL, notifications still work but carry no Click.
+    const noClick: Array<Record<string, unknown>> = [];
+    const plain: NtfyFetch = async (_url, init) => {
+      noClick.push(init.headers);
+      return { ok: true };
+    };
+    const disabled = fakeFetchContext([event("s", "session.execution.succeeded", { sessionID: "root" })]);
+    const cleanupDisabled = await startNtfyNotifications(disabled.context, {
+      env: { [NTFY_URL_ENV]: VALID_URL },
+      fetch: plain,
+    });
+    await flush();
+    cleanupDisabled?.();
+    expect(noClick).toHaveLength(1);
+    expect(noClick[0]!.Click).toBeUndefined();
+
+    // An invalid web URL disables only the click, not the notification.
+    const invalid: Array<Record<string, unknown>> = [];
+    const invalidFetch: NtfyFetch = async (_url, init) => {
+      invalid.push(init.headers);
+      return { ok: true };
+    };
+    const bad = fakeFetchContext([event("s", "session.execution.succeeded", { sessionID: "root" })]);
+    const cleanupBad = await startNtfyNotifications(bad.context, {
+      env: { [NTFY_URL_ENV]: VALID_URL, [OPENCODE_WEB_URL_ENV]: "http://opencode.example.test:1496/not-root" },
+      fetch: invalidFetch,
+    });
+    await flush();
+    cleanupBad?.();
+    expect(invalid).toHaveLength(1);
+    expect(invalid[0]!.Click).toBeUndefined();
+  });
+
   test("subscribes once with the documented types and aborts on cleanup", async () => {
     const { context, subscriptions } = fakeFetchContext([]);
     const cleanup = await startNtfyNotifications(context, {
@@ -679,6 +952,11 @@ describe("ntfy plugin wiring", () => {
     expect(subscriptions[0]!.signal?.aborted).toBe(false);
     cleanup?.();
     expect(subscriptions[0]!.signal?.aborted).toBe(true);
+  });
+
+  test("subscribes to the 2.2.5 success event, not the legacy idle type", () => {
+    expect(NTFY_EVENT_TYPES).toContain("session.execution.succeeded");
+    expect(NTFY_EVENT_TYPES).not.toContain("session.idle");
   });
 
   test("seeds child sessions from the session list", async () => {
@@ -694,7 +972,7 @@ describe("ntfy plugin wiring", () => {
     cleanup?.();
   });
 
-  test("end to end: idle, error, and permission reach the endpoint; children do not", async () => {
+  test("end to end: success, error, and permission reach the endpoint; children do not", async () => {
     const calls: Array<{ url: string; init: Record<string, unknown> }> = [];
     const recorder: NtfyFetch = async (url, init) => {
       calls.push({ url, init });
@@ -702,8 +980,8 @@ describe("ntfy plugin wiring", () => {
     };
     const events = [
       event("c1", "session.created", { sessionID: "child", parentID: "root" }),
-      event("i-child", "session.idle", { sessionID: "child" }),
-      event("i-root", "session.idle", { sessionID: "root" }),
+      event("i-child", "session.execution.succeeded", { sessionID: "child" }),
+      event("i-root", "session.execution.succeeded", { sessionID: "root" }),
       event("x-root", "session.execution.failed", {
         sessionID: "root",
         error: { message: "SENTINEL_ERROR" },
@@ -720,7 +998,7 @@ describe("ntfy plugin wiring", () => {
 
     expect(calls).toHaveLength(3);
     expect(calls.map((call) => call.init.body)).toEqual([
-      "Session idle",
+      "Session complete",
       "Session error",
       "Permission needed",
     ]);
@@ -790,15 +1068,15 @@ describe("ntfy plugin wiring", () => {
     // These arrive while the seed is still pending; a pre-subscription design
     // would have dropped them.
     push(event("c1", "session.created", { sessionID: "child", parentID: "root" }));
-    push(event("i-child", "session.idle", { sessionID: "child" }));
-    push(event("i-root", "session.idle", { sessionID: "root" }));
+    push(event("i-child", "session.execution.succeeded", { sessionID: "child" }));
+    push(event("i-root", "session.execution.succeeded", { sessionID: "root" }));
 
     gate.resolve();
     const cleanup = await starting;
     await flush();
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.init.body).toBe("Session idle");
+    expect(calls[0]!.init.body).toBe("Session complete");
     cleanup?.();
   });
 
@@ -968,28 +1246,48 @@ describe("ntfy plugin wiring", () => {
 });
 
 describe("ntfy secret allowlist", () => {
-  test("the vault accepts NTFY_URL and NTFY_TOKEN", () => {
+  test("the vault accepts NTFY_URL, NTFY_TOKEN, and OPENCODE_WEB_URL", () => {
     const secrets = parseVaultYaml(
-      [`NTFY_URL: "${VALID_URL}"`, 'NTFY_TOKEN: "tk_secret"', "EXA_API_KEY: exa"].join("\n"),
+      [
+        `NTFY_URL: "${VALID_URL}"`,
+        'NTFY_TOKEN: "tk_secret"',
+        'OPENCODE_WEB_URL: "http://opencode.example.test:1496"',
+        "EXA_API_KEY: exa",
+      ].join("\n"),
     );
     expect(secrets.NTFY_URL).toBe(VALID_URL);
     expect(secrets.NTFY_TOKEN).toBe("tk_secret");
+    expect(secrets.OPENCODE_WEB_URL).toBe("http://opencode.example.test:1496");
   });
 
-  test("the service environment forwards present ntfy values and scrubs stale ones", () => {
+  test("the service environment forwards present ntfy and web values and scrubs stale ones", () => {
     const withValues = buildServiceEnv(
-      { [NTFY_URL_ENV]: "stale", [NTFY_TOKEN_ENV]: "stale" },
-      { [NTFY_URL_ENV]: VALID_URL, [NTFY_TOKEN_ENV]: "fresh" },
+      {
+        [NTFY_URL_ENV]: "stale",
+        [NTFY_TOKEN_ENV]: "stale",
+        [OPENCODE_WEB_URL_ENV]: "stale",
+      },
+      {
+        [NTFY_URL_ENV]: VALID_URL,
+        [NTFY_TOKEN_ENV]: "fresh",
+        [OPENCODE_WEB_URL_ENV]: "http://opencode.example.test:1496",
+      },
     );
     expect(withValues.NTFY_URL).toBe(VALID_URL);
     expect(withValues.NTFY_TOKEN).toBe("fresh");
+    expect(withValues.OPENCODE_WEB_URL).toBe("http://opencode.example.test:1496");
 
     const withoutValues = buildServiceEnv(
-      { [NTFY_URL_ENV]: "stale", [NTFY_TOKEN_ENV]: "stale" },
+      {
+        [NTFY_URL_ENV]: "stale",
+        [NTFY_TOKEN_ENV]: "stale",
+        [OPENCODE_WEB_URL_ENV]: "stale",
+      },
       {},
     );
     expect(withoutValues.NTFY_URL).toBeUndefined();
     expect(withoutValues.NTFY_TOKEN).toBeUndefined();
+    expect(withoutValues.OPENCODE_WEB_URL).toBeUndefined();
   });
 
   test("vault values feed the resolver end to end", () => {
@@ -1010,6 +1308,7 @@ describe("ntfy source hygiene", () => {
     "lib/ntfy/publisher.ts",
     "lib/ntfy/notifier.ts",
     "lib/ntfy/plugin.ts",
+    "lib/ntfy/click.ts",
     "plugins/notification-ntfy.ts",
   ];
 

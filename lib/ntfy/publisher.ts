@@ -20,6 +20,8 @@ export interface NtfyPublishRequest {
   readonly message: string;
   readonly priority: NtfyPriority;
   readonly tags: readonly string[];
+  /** Optional click-through URL, sent only as the ntfy `Click` header. */
+  readonly click?: string;
 }
 
 /** Minimal fetch contract; the real `fetch` satisfies it. */
@@ -77,6 +79,9 @@ export function createFetchPublisher(
       Priority: request.priority,
       Tags: request.tags.join(","),
     };
+    if (request.click !== undefined) {
+      headers.Click = request.click;
+    }
     if (request.token !== undefined) {
       headers.Authorization = `Bearer ${request.token}`;
     }

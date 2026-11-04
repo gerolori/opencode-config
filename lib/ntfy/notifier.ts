@@ -7,7 +7,7 @@
  *
  * Behaviour:
  * - only the supplied event types are understood; anything else is ignored;
- * - `session.created.parentID` marks a child (subagent) session, and idle,
+ * - `session.created.parentID` marks a child (subagent) session, and success,
  *   error, and permission events from children are suppressed to avoid
  *   notification storms;
  * - every event is deduplicated by its unique `id`, so a redelivered event never
@@ -19,6 +19,10 @@
  *   payloads is ever read;
  * - publishing is fire-and-forget; a rejection is routed to `onError` (default:
  *   ignored) and never thrown into the event loop.
+ * - when a `clickForSession` builder is supplied (from an opt-in
+ *   `OPENCODE_WEB_URL`), root notifications also carry an ntfy `Click` URL for
+ *   the exact session. A missing, unsafe, or throwing builder omits the link;
+ *   notification delivery is unaffected.
  */
 
 import type { NtfyPriority } from "./publisher";
@@ -28,6 +32,8 @@ export interface NtfyNotification {
   readonly message: string;
   readonly priority: NtfyPriority;
   readonly tags: readonly string[];
+  /** Optional ntfy `Click` header; only a configured web root ever supplies it. */
+  readonly click?: string;
 }
 
 export type NtfySend = (notification: NtfyNotification) => Promise<void>;
@@ -53,6 +59,11 @@ export interface NtfyNotifierOptions {
   readonly onError?: (error: unknown) => void;
   /** Dedup/child-set capacity; oldest entries are evicted first. */
   readonly maxTracked?: number;
+  /**
+   * Optional click-link builder. It is called only for a root notification and
+   * must return a fully safe URL or `undefined`. A throw is contained.
+   */
+  readonly clickForSession?: (sessionID: string) => string | undefined;
 }
 
 export interface NtfyNotifier {
@@ -62,7 +73,7 @@ export interface NtfyNotifier {
 
 export type ParsedNtfyEvent =
   | { readonly kind: "created"; readonly id: string; readonly sessionID: string; readonly parentID?: string }
-  | { readonly kind: "idle"; readonly id: string; readonly sessionID: string }
+  | { readonly kind: "success"; readonly id: string; readonly sessionID: string }
   | { readonly kind: "error"; readonly id: string; readonly sessionID: string }
   | { readonly kind: "permission"; readonly id: string; readonly sessionID: string };
 
@@ -117,8 +128,8 @@ export function parseNtfyEvent(event: unknown): ParsedNtfyEvent | undefined {
     const parentID = asString(data.parentID);
     return { kind: "created", id, sessionID, parentID };
   }
-  if (type === "session.idle") {
-    return { kind: "idle", id, sessionID };
+  if (type === "session.execution.succeeded") {
+    return { kind: "success", id, sessionID };
   }
   if (type === "session.execution.failed") {
     return { kind: "error", id, sessionID };
@@ -142,6 +153,25 @@ export function createNtfyNotifier(options: NtfyNotifierOptions): NtfyNotifier {
       });
   };
 
+  /**
+   * Attach a click link when a builder is configured. A builder throw or an
+   * unsafe session id simply omits the link; it never breaks the notification.
+   */
+  const withClick = (
+    notification: NtfyNotification,
+    sessionID: string,
+  ): NtfyNotification => {
+    const clickForSession = options.clickForSession;
+    if (clickForSession === undefined) return notification;
+    let click: string | undefined;
+    try {
+      click = clickForSession(sessionID);
+    } catch {
+      return notification;
+    }
+    return click === undefined ? notification : { ...notification, click };
+  };
+
   return {
     handle(event: unknown): void {
       const parsed = parseNtfyEvent(event);
@@ -157,32 +187,47 @@ export function createNtfyNotifier(options: NtfyNotifierOptions): NtfyNotifier {
 
       if (children.has(parsed.sessionID)) return;
 
-      if (parsed.kind === "idle") {
-        emit({
-          title: "OpenCode",
-          message: "Session idle",
-          priority: "default",
-          tags: ["white_check_mark"],
-        });
+      if (parsed.kind === "success") {
+        emit(
+          withClick(
+            {
+              title: "OpenCode",
+              message: "Session complete",
+              priority: "default",
+              tags: ["white_check_mark"],
+            },
+            parsed.sessionID,
+          ),
+        );
         return;
       }
 
       if (parsed.kind === "error") {
-        emit({
-          title: "OpenCode",
-          message: "Session error",
-          priority: "high",
-          tags: ["rotating_light"],
-        });
+        emit(
+          withClick(
+            {
+              title: "OpenCode",
+              message: "Session error",
+              priority: "high",
+              tags: ["rotating_light"],
+            },
+            parsed.sessionID,
+          ),
+        );
         return;
       }
 
-      emit({
-        title: "OpenCode",
-        message: "Permission needed",
-        priority: "high",
-        tags: ["warning"],
-      });
+      emit(
+        withClick(
+          {
+            title: "OpenCode",
+            message: "Permission needed",
+            priority: "high",
+            tags: ["warning"],
+          },
+          parsed.sessionID,
+        ),
+      );
     },
 
     seedChildren(sessionIDs: Iterable<string>): void {

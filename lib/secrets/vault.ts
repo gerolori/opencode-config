@@ -23,6 +23,7 @@ export const SECRET_KEYS = [
   "OPENROUTER_API_KEY",
   "NTFY_URL",
   "NTFY_TOKEN",
+  "OPENCODE_WEB_URL",
 ] as const;
 
 export type SecretKey = (typeof SECRET_KEYS)[number];

@@ -228,6 +228,7 @@ COMPOSIO_CONSUMER_API_KEY   optional
 OPENROUTER_API_KEY          optional
 NTFY_URL                    optional; endpoint for phone notifications
 NTFY_TOKEN                  optional; ntfy bearer token
+OPENCODE_WEB_URL            optional; web root for ntfy click-through links
 ```
 
 Top-level `KEY: "value"` pairs only. Nested mappings, lists, block scalars,
@@ -244,6 +245,17 @@ notifications rather than sending an unauthenticated publish. A truly absent
 truly empty value, so an empty token cannot reach the plugin through the vault;
 an empty ambient value is also rejected by the plugin. See
 `docs/notifications.md`.
+
+`OPENCODE_WEB_URL` is an optional private/local web origin used only to build
+ntfy `Click` links. It is not a credential, but it becomes visible in the
+notification together with the session id. The plugin trims and strips trailing
+slashes for the same key the UI uses, but it does **not** default a missing
+scheme: `http://` or `https://` must be typed explicitly, and a bare host is
+rejected. It also requires an ASCII origin root and omits the click on an
+invalid value without disabling notifications. Prefer HTTPS; choosing HTTP is
+your explicit decision and is only appropriate on a protected private overlay.
+Tailscale connectivity alone does not authenticate the OpenCode server. See the
+disclosure and warnings in `docs/notifications.md`.
 
 ### 6. Per-machine dry run
 

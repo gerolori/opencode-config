@@ -6,13 +6,17 @@
  * notifier. It does not read sessions, prompts, or messages, and it never logs
  * the endpoint or token.
  *
- * Event choice (offline evidence: `@opencode/client` 2.2.5 `V2Event` union and
- * `@opencode/schema` `SessionEvent`/`SessionStatusEvent`):
+ * Event choice (offline evidence: `@opencode/client` 2.2.5 `V2Event` union,
+ * `@opencode/schema` `SessionEvent`/`SessionStatusEvent`, and the installed
+ * 2.2.5 CLI runtime):
  * - `session.created` supplies `parentID`, which distinguishes a subagent child
  *   session from a root session.
- * - `session.idle` is the dedicated "finished model work, no pending input"
- *   event; `session.status` is intentionally not subscribed to, so an idle
- *   transition cannot notify twice.
+ * - `session.execution.succeeded` is the terminal success event emitted by the
+ *   2.2.5 runtime when a turn completes. Its `data` is only `{ sessionID }`.
+ *   The legacy `session.idle` type still exists in the schema but the installed
+ *   runtime does not publish it, so subscribing to it would miss completions.
+ *   `session.status` is intentionally not subscribed to, so a completion cannot
+ *   notify twice.
  * - `session.execution.failed` is the session-level execution failure event. Its
  *   `error` payload is not read. Interruptions, per-step failures, retries,
  *   compaction failures, and tool failures are deliberately NOT subscribed to,
@@ -26,20 +30,31 @@
  * pre-existing child sessions be suppressed. If the buffer overflows, it is
  * flushed early and dispatch continues live (documented tradeoff).
  *
- * This is scaffolding proven only against the installed type declarations and
- * hermetic tests. Whether these events fire at the expected time in a live
- * service, whether `session.execution.failed` fires for every failed turn, and
- * how a child session's idle is delivered while its parent is still working, are
- * NOT proven offline and require a live restart check.
+ * This is scaffolding proven against the installed type declarations, the
+ * installed 2.2.5 runtime strings, and hermetic tests. Whether these events fire
+ * at the expected time in a live service, whether `session.execution.failed`
+ * fires for every failed turn, and how a child session's success is delivered
+ * while its parent is still working, are NOT proven offline and require a live
+ * restart check.
+ *
+ * Optional click-through links: when `OPENCODE_WEB_URL` is set, root
+ * notifications carry an ntfy `Click` header built from that UI-canonical
+ * origin and the event's `sessionID`. An absent or invalid value omits the link
+ * and never disables notifications. The URL is never logged.
  */
 
 import { resolveNtfyConfig } from "./config";
+import {
+  buildSessionClickUrl,
+  OPENCODE_WEB_URL_ENV,
+  resolveNtfyClickConfig,
+} from "./click";
 import { createNtfyNotifier, safeOnError, type NtfyNotifier } from "./notifier";
 import { createFetchPublisher, type NtfyFetch } from "./publisher";
 
 export const NTFY_EVENT_TYPES = [
   "session.created",
-  "session.idle",
+  "session.execution.succeeded",
   "session.execution.failed",
   "permission.asked",
 ] as const;
@@ -200,6 +215,8 @@ export async function startNtfyNotifications(
   previous?.abort();
 
   const publish = createFetchPublisher(fetchImpl, { signal: controller.signal });
+  const env = overrides.env ?? process.env;
+  const clickConfig = resolveNtfyClickConfig(env[OPENCODE_WEB_URL_ENV]);
   const notifier = createNtfyNotifier({
     send: (notification) =>
       publish({
@@ -208,6 +225,10 @@ export async function startNtfyNotifications(
         ...notification,
       }),
     onError: overrides.onError,
+    clickForSession:
+      clickConfig === undefined
+        ? undefined
+        : (sessionID) => buildSessionClickUrl(clickConfig, sessionID),
   });
 
   // Subscribe BEFORE the seed so events that arrive during the seed are not

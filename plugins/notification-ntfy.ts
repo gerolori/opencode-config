@@ -15,6 +15,8 @@
  * - notification bodies carry no prompt, message, title, path, command, or error
  *   text;
  * - publishing is fire-and-forget and failures are swallowed (nonfatal);
+ * - optional click-through links use only the configured `OPENCODE_WEB_URL`, a
+ *   safe session id, and a `Click` header; an invalid value just omits the link;
  * - the endpoint and token are never logged.
  */
 

@@ -40,7 +40,8 @@ contract smoke checks remain pending, along with the manual OpenAI step below.
 - The remaining legacy optional plugins stay disabled: table formatter, smart title,
   unmoji. No native replacement is claimed to restore their functionality.
 - `notification-ntfy` is a new opt-in 2.x local plugin that restores phone
-  notifications on root-session idle (completion), errors, and permission asks.
+  notifications on root-session completion (`session.execution.succeeded`),
+  errors, and permission asks.
   It is disabled unless `NTFY_URL` is present in the service environment. See
   `docs/notifications.md`.
 

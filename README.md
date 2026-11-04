@@ -230,11 +230,12 @@ commands, and falls back on a hard deadline. Do not stack RTK or a second compre
 The primary needs the `compress` permission.
 
 `notification-ntfy` (id `notification-ntfy`) is an opt-in 2.x local plugin that
-restores phone notifications on root-session idle (completion), errors, and
-permission asks. It is disabled unless `NTFY_URL` is present in the service
-environment (normally from the SOPS vault); the endpoint must be HTTPS; a
-present-but-invalid token fails closed (missing token is allowed for a public
-topic); child sessions are suppressed and events are deduplicated; bodies carry
+restores phone notifications on root-session completion
+(`session.execution.succeeded`), errors, and permission asks. It is disabled
+unless `NTFY_URL` is present in the service environment (normally from the SOPS
+vault); the endpoint must be HTTPS; a present-but-invalid token fails closed
+(missing token is allowed for a public topic); child sessions are suppressed and
+events are deduplicated; bodies carry
 no session content, error text, or permission action; failures are nonfatal. It
 never logs the URL or token. See `docs/notifications.md`.
 

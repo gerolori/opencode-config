@@ -65,6 +65,15 @@ OPENROUTER_API_KEY: "optional-replace-me"
 # is a capability. Use your own server/topic; never paste a real value into chat.
 NTFY_URL: "https://ntfy.example.com/<your-private-topic>"
 NTFY_TOKEN: "optional-bearer-token"
+# Optional click-through links. This private/local origin is embedded in the ntfy
+# Click header together with the session id, so other notification readers and
+# history can see it. Prefer HTTPS; choosing HTTP is your explicit decision and
+# is only for a protected private overlay. The plugin never defaults a missing
+# scheme to http:// and the Tailscale connection itself does not authenticate
+# OpenCode. The plugin trims and strips trailing slashes the same way the web UI
+# does before building the server key. Only an ASCII origin is accepted; use the
+# explicit punycode host if needed.
+OPENCODE_WEB_URL: "https://opencode.example.com"
 ```
 
 Rules enforced by `scripts/secret-launch.ts`:
